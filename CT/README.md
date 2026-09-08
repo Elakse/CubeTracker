@@ -1,0 +1,94 @@
+# CubeTracker
+
+A local speedcubing workspace with an interactive 3D cube, timer, solve library, and progress analytics.
+
+## Open it
+
+Double-click **Start CubeTracker.cmd**. It opens [CubeTracker](http://127.0.0.1:4173) and runs the local saver in the background. Node.js 22 or newer is required; it is already available on this computer. Use **Stop CubeTracker.cmd** when you are finished.
+
+1. Create a category with any name you like, or import an existing CSV into a new category from **Settings → Import CSV**.
+2. The timer is the home screen. Hold Space until the digits light up, then release. Press any key to stop. Turn on **Start on a single press** in Settings to start on one press instead of a hold. On touch screens, press and hold the timer, then tap to stop. Enter provides an instant-start alternative when the timer is focused. **Settings → Record solves on video** adds per-solve camera recording with camera, resolution, and frame-rate controls.
+3. Every attempt saves automatically to that category's CSV in this folder. Change a penalty with **OK**, **+2**, or **DNF**. Deleted solves can be restored with **Undo**.
+
+The app also works by opening **CTU.html** directly, with the `assets` folder beside it. In this mode, data initially saves in the browser. Use **Storage details → Connect a folder** in a supported browser to enable automatic CSV writes, or use **Export CSV**. Folder access must be reconnected after reopening. The launcher is the easiest way to get automatic saving beside the HTML.
+
+## Your files
+
+- Category CSVs use `category-name-unique-id.csv`. Importing preserves the source file and creates a working copy for continued recording. Renaming a category keeps its existing filename.
+- Deleting a category removes it from the workspace only; its CSV stays in the folder, so importing that file brings the solves back.
+- `.cubetracker.json` stores the complete library, category names, underlying DNF times, and solve notes. CSV files are portable copies in the original four-column format. Keep this file with your folder to preserve the full workspace.
+- `videos/solve-id.webm` (or `.mp4` when the browser requires it) stores one independent recording per solve. Video bytes never enter the CSV or library JSON. Deleting a solve or category also removes its recordings after the Undo window. In standalone HTML mode, clips use the browser's dedicated video storage instead.
+- `backups/category-name-unique-id.csv.bak` contains the previous CSV version. Copy it to a `.csv` filename and import it to recover an earlier version.
+- `backups/CTU.original.html` is the original website.
+- Local browser recovery copies protect pending writes. Failed saves are shown explicitly. Concurrent windows cannot silently overwrite each other's changes; reload and use the recovery CSVs if a conflict is reported.
+- Files edited outside the app should be imported again. The workspace metadata is the source used at startup.
+
+The app has no account, telemetry, external fonts, or CDN dependencies. The local server listens only on this computer. Keep the entire folder together when moving it.
+
+## CSV format
+
+```csv
+Index,Time,Scramble,Date
+"3","DNF","R2 U F'","2026-09-06T12:02:00.000Z"
+"2","64.50+","F2 D R'","2026-09-06T12:01:00.000Z"
+"1","12.34","R U R' U'","2026-09-06T12:00:00.000Z"
+```
+
+Exported times are decimal **seconds**. A trailing `+` means the two-second penalty is **already included**. DNFs export as plain `DNF` for compatibility with the original site; underlying DNF timing and notes remain in the workspace metadata. The importer also understands `minutes:seconds`, `DNF(time)`, quoted dates, legacy dates with unquoted commas, and a UTF-8 BOM. Exports retain millisecond precision when an imported time uses it. New timer attempts use centiseconds.
+
+Exports are newest first, matching the original file workflow. The app analyzes solves chronologically. Invalid time rows reject the import with an explanation rather than silently disappearing. Missing dates and unsupported scramble notation are retained with a warning. Appending an import skips exact duplicates on date, time, penalty, and scramble.
+
+## Interface
+
+The sidebar stays out of the way: move the pointer to the left edge of the window and it slides out over a blurred page, then slides back when the pointer leaves. On narrow windows it stays as a fixed icon rail.
+
+The theme follows your system setting. The sidebar toggle overrides it and remembers the choice.
+
+The timer fills the window and is where the app opens. Between attempts the scramble sits directly above the time, the 3D cube to the left of it, the penalty controls below, and every solve in the panel on the right. Click the scramble for a new one, or click the cube to switch between 3D and the flat net. Starting an attempt slides the panel out and fades everything but the time; it all comes back when you stop. With video enabled, the warmed camera begins immediately at inspection start or the initial hold, and its rounded live feed fades onto the stage. Single-press mode begins recording on the initiating release. The camera records video only, without microphone audio.
+
+The solve panel lists times newest first with their solve numbers, and loads more as you scroll with no scrollbar of its own. Each row has a delete button, and clicking a row opens that solve's details. Averages and the personal best sit above the list.
+
+There is no top bar: the sidebar holds navigation, categories, the theme, and **Settings**, which carries video capture (480p/720p/1080p and 24/30/60 fps), inspection, single-press starting, the flat-net preview, CSV import, and storage details. Manual entry is in the solve library.
+
+## Explore
+
+- **Overview:** the best consecutive 500-solve mean and global ao5 PB always cover the active category, independently of the last-n selector. The best 500 earns a framed sub-time title; a rusty variant reflects current form without removing that title. Session mean, solve count, and the chart follow the selector. Select a calendar day for its date and solve count.
+- **Timer:** keyboard and touch controls, hold-to-start or single-press starting, optional 15-second inspection, the full solve list beside the time, and automatic saving. Click Best for its solve, Mean to remember a global or last-n cutoff, and ao5/ao12 for a split inspector with chronological solves, excluded fastest/slowest entries, and the selected scramble's 3D/2D preview, playback, penalties, and note. On phones, the stats and solve list sit below the timer.
+- **Timer motion:** inspection has spoken cues at 8 and 12 seconds, with a prominent countdown banner, thick pulsing halo, and screen-edge warning in the final three seconds. +2 begins at 15 seconds; at 17 the attempt saves as DNF. Single/ao5/ao12/ao100 PB rewards state the record and improvement, with spectacle scaled by relative improvement and simultaneous records. Scramble moves appear in sequence and the cube grows into place with an overshoot. New attempts interrupt rewards; reduced motion retains readable feedback. **Guide & shortcuts → Animation studio** previews every reward, title, rusty frame, recovery, inspection and entrance without saving solves.
+- **Sub-time titles:** only start at 500 attempts. Use the arithmetic mean of exactly the last 500, with +2 included and any DNF making that window DNF. Every historical window is scanned to recover the best 500 from imports and reloads. Special thresholds are 60, 45, 30, 25, 20, 15, 10, 8, 7, 6 and 5 seconds, with eleven increasing reward levels. Ordinary crossings in both directions use the category's global completed-solve mean to choose intervals: below 20s → 0.5s, below 30s → 1s, below 120s → 5s, below 600s → 20s. Above that, round mean/30 upward on a 1–2–5 scale (20, 50, 100, 200, 500…). Special titles are earned only on a new historical best crossing. Rust starts strictly above the earned threshold plus one interval from the band just below that threshold; returning within this margin clears it. Imports and edits rebuild the status without launching celebrations.
+- **Solve library:** search, result and date filters, sorting, continuous loading as you scroll, manual entry, and filtered CSV export. Open a solve to inspect the scramble, add a note, or change its penalty. A recorded solve adds a looping, control-free player to the left of the cube preview; click the video to pause or resume it.
+- **Insights:** percentage of the last *n* attempts strictly under *t* seconds with its rolling history and linear trend, distribution, standard deviation, median, personal-best progression, best averages, and practice by weekday. It opens on every solve and can narrow to the last 50 through 10,000.
+
+DNFs stay in rolling windows and count as misses for targets. Averages trim the fastest and slowest 5%, rounded up. The consistency target starts at sub-10 over the last 1,000 solves. Its graph starts with the first complete window, scales its axis to the values it holds so a run sitting between 95% and 100% is still readable, and carries a dashed least-squares trend line; a range too short for one complete window says so instead of drawing an empty grid.
+
+## Cube and scrambles
+
+Start with **white up and green front**. Drag to orbit with inertia, use the arrow keys to change the viewing angle, or press Home to reset; the zoom level is fixed. Click the cube once to switch to the unfolded net, which uses the same cube state, and click again to return to 3D. Play the scramble, step forward/backward, or select a move to inspect its prefix.
+
+The geometric engine supports `U R F D L B`, prime/double turns, wide moves (`Rw` or `r`), `M E S`, and `x y z`. Unsupported notation is displayed explicitly instead of being silently interpreted as a different move.
+
+**Appearance** is two panes: the app's display mode and color theme scroll on the left, everything about the cube stays put on the right, separated by a divider. The dialog itself never scrolls, so the preview cannot be pushed out from under its controls; on narrow or short windows the two panes stack instead.
+
+**Appearance → cube carousel** selects **Standard**, **Tiles** (formerly Studio), **Stickers**, **Speedcube**, or **UV Speedcube**, with a solved, rotatable preview. Press anywhere in the outer quarter of the preview on either side to move to the next or previous cube; the middle stays free for dragging the cube around and clicking for the flat net. The current cube slides out towards the side pressed away from and the next arrives from the side pressed, swapping models while it is off-frame. Dots below show the position in the list.
+
+**Appearance → Cube colors** offers Classic and Vivid side by side. Tiles has raised glossy caps; Stickers has thin, flush color films on the same rounded black body; Speedcube uses colored molded faces with separate center, edge and corner contours and a printed center emblem, based on the supplied reference; UV Speedcube is the same cube under a cured clear coat, so it differs only in surface — a near-mirror clearcoat with its own orange peel, and a studio holding the softboxes that coat reflects. Every model consumes the same palette, including the flat net and all scramble/playback previews. Model and palette save independently on this device. Old Studio preferences migrate to Tiles; removed palettes fall back to Classic. The local 3D renderer loads on demand, renders only during interaction/playback/resizing, and releases its resources when models change. If WebGL is unavailable, the standard preview remains usable.
+
+**Appearance → Environment** switches the 3D cube between the generated bright Studio rig and a warm photographed Wooden lounge. The choice is saved with the other cube settings and applies to the timer, solve details, averages, and Appearance preview. The photograph is bundled locally; if it cannot be loaded, the renderer falls back to the generated studio instead of leaving the cube blank.
+
+**Appearance → Surface wear** independently switches realistic cubes between pristine factory-new plastic and a handled finish with reflective hairline scratches. The baked normal and roughness textures work at every quality level; the UV model has its own combined clearcoat map so scratches disturb the reflection on top of the coating. **Graphics quality** remains a separate dropdown: Balanced adds shadows; High adds per-cap colour variation and separate geometry for all 54 caps; Ultra adds screen-space occlusion, lens aberration and grain; Cinematic adds defocus, halation, lens distortion and a film grade. See `docs/graphics-quality.md`.
+
+When launched locally, a worker uses [cubejs](https://github.com/ldez/cubejs) to generate random states and derive verified scramble sequences using two-phase solving. Several scrambles are prepared ahead of time. Standalone HTML mode uses clearly labeled random-move practice scrambles. This is a practice timer, not an official competition scramble source.
+
+## Verification and maintenance
+
+No build step or package installation is needed. Run `npm test`, or:
+
+```text
+node --test tests/core.test.cjs tests/timer.test.cjs tests/server.test.mjs
+```
+
+Tests cover 1,000 mixed scrambles against the independent cubejs model, move identities, CSV compatibility, penalties, trimmed averages, target windows, timer transitions, inspection boundaries and expiry, exact video start triggers, single-press starting, touch-release behavior, independent video streaming and ranges, separate files, backups, conflict detection, and restart persistence. Server tests run in an isolated temporary folder. `node tests/video-recording-interface.cjs` exercises configurable capture, asynchronous storage, the live feed, and the looping player in a real browser with a synthetic camera.
+
+The interface was also checked in the browser for recording, penalties, import, duplicate detection, search, reconstruction playback, and responsive layouts.
+
+Bundled dependencies: cubejs 1.3.2 (MIT), Three.js 0.160.1 and its geometry helpers (MIT), DM Sans and Manrope (SIL Open Font License). Their licenses are in `assets/vendor`. `node tests/cube-appearance.cjs` checks the compact average dialogs and cube styles in an isolated browser session; `node tests/env-check.cjs` checks the reflection-environment switch and its fallback (both require Playwright and Chrome).

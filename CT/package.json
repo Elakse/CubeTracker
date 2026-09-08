@@ -1,0 +1,13 @@
+{
+  "name": "cubetracker",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A local speedcubing timer and analytics workspace",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/core.test.cjs tests/timer.test.cjs tests/effects.test.cjs tests/server.test.mjs"
+  }
+}

@@ -1,0 +1,3850 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CubeTracker Ultra - Analítica Avanzada de Speedcubing</title>
+    
+    <!-- Scripts & Fonts -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Modern Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        /* Base Design System */
+        :root {
+            --font-ui: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --bg-color: #030712;
+            --panel-bg: rgba(10, 15, 30, 0.55);
+            --border-glow: rgba(56, 189, 248, 0.15);
+            --sky-glow: rgba(14, 165, 233, 0.12);
+            --purple-glow: rgba(139, 92, 246, 0.12);
+        }
+
+        html,
+        body {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+
+        body {
+            font-family: var(--font-ui);
+            background-color: var(--bg-color);
+            color: #f3f4f6;
+        }
+
+        body.welcome-active {
+            overflow: hidden;
+        }
+
+        body.dashboard-active {
+            overflow-y: auto;
+        }
+
+        body.lock-tab-scroll {
+            overflow: hidden;
+        }
+
+        body.dashboard-active #tab-nav-container {
+            display: flex !important;
+        }
+
+        .app-shell {
+            width: min(calc(100% - 2rem), 1800px);
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        @media (min-width: 768px) {
+            .app-shell {
+                width: min(calc(100% - 4rem), 1800px);
+            }
+        }
+
+        #welcome-view {
+            height: calc(100vh - 116px);
+            max-height: calc(100vh - 116px);
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        #dashboard {
+            padding-left: 0;
+            padding-right: 0;
+            position: relative;
+        }
+
+        body.dashboard-active #dashboard {
+            padding-top: 0;
+        }
+
+        #loading-overlay.pointer-events-none,
+        #loading-overlay.pointer-events-none * {
+            pointer-events: none !important;
+        }
+
+        .mono-text {
+            font-family: var(--font-mono);
+        }
+
+        /* Ambient Glow Blobs */
+        .glow-blob {
+            position: fixed;
+            width: 450px;
+            height: 450px;
+            border-radius: 50%;
+            filter: blur(150px);
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.65;
+            transform: translate3d(var(--blob-x, 0px), var(--blob-y, 0px), 0) scale(var(--blob-scale, 1));
+            will-change: transform;
+            contain: layout paint;
+        }
+
+        .blob-1 {
+            background: rgba(14, 165, 233, 0.22);
+            top: 15%;
+            left: -10%;
+        }
+
+        .blob-2 {
+            background: rgba(168, 85, 247, 0.18);
+            bottom: 20%;
+            right: -10%;
+        }
+
+        .blob-3 {
+            background: rgba(16, 185, 129, 0.12);
+            top: 50%;
+            left: 40%;
+        }
+
+        /* Premium Glass Cards with Mouse spotlight */
+        .premium-card {
+            background: var(--panel-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 1.25rem;
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.05);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            z-index: 10;
+        }
+
+        /* Spotlight border overlay */
+        .premium-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 1.25rem;
+            padding: 1.5px;
+            background: radial-gradient(
+                450px circle at var(--mouse-x, 0) var(--mouse-y, 0),
+                rgba(56, 189, 248, 0.35),
+                transparent 45%
+            );
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        /* Spotlight background overlay */
+        .premium-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 1.25rem;
+            background: radial-gradient(
+                350px circle at var(--mouse-x, 0) var(--mouse-y, 0),
+                rgba(99, 102, 241, 0.06),
+                transparent 45%
+            );
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .premium-card:hover {
+            border-color: rgba(56, 189, 248, 0.15);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75), 0 0 20px rgba(56, 189, 248, 0.12);
+            transform: translateY(-2px);
+        }
+
+        .premium-card:hover::before,
+        .premium-card:hover::after {
+            opacity: 1;
+        }
+
+        /* Drag & Drop Upload Zone */
+        .upload-zone {
+            border: 2px dashed rgba(56, 189, 248, 0.25);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .upload-zone.dragover {
+            border-color: #38bdf8;
+            background: rgba(56, 189, 248, 0.08);
+            box-shadow: 0 0 30px rgba(56, 189, 248, 0.2), inset 0 0 20px rgba(56, 189, 248, 0.05);
+            transform: scale(1.01);
+        }
+
+        /* Interactive 3D Rubik's Cube */
+        .cube-viewport {
+            perspective: 800px;
+            width: 160px;
+            height: 160px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+        }
+
+        .rubik-cube-3d {
+            --cube-size: 100px;
+            --cube-depth: 50px;
+            width: var(--cube-size);
+            height: var(--cube-size);
+            position: relative;
+            transform-style: preserve-3d;
+            transform: rotateX(-25deg) rotateY(45deg);
+            animation: rotateCube 8s infinite linear;
+            transition: none;
+            will-change: transform;
+        }
+
+        @keyframes rotateCube {
+            0% { transform: rotateX(-25deg) rotateY(0deg); }
+            100% { transform: rotateX(-25deg) rotateY(360deg); }
+        }
+
+        .cube-face {
+            position: absolute;
+            width: var(--cube-size);
+            height: var(--cube-size);
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 2px;
+            background: #030712;
+            border: 3px solid #030712;
+            box-sizing: border-box;
+            border-radius: 6px;
+            backface-visibility: visible;
+        }
+
+        .cube-face div {
+            border-radius: 2px;
+            box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.4);
+        }
+
+        .cube-mini {
+            --cube-size: 24px;
+            --cube-depth: 12px;
+        }
+
+        .cube-mini .cube-face {
+            gap: 1px;
+            border-width: 1px;
+            border-radius: 3px;
+        }
+
+        .face-front  { transform: translateZ(var(--cube-depth)); }
+        .face-back   { transform: rotateY(180deg) translateZ(var(--cube-depth)); }
+        .face-left   { transform: rotateY(-90deg) translateZ(var(--cube-depth)); }
+        .face-right  { transform: rotateY(90deg) translateZ(var(--cube-depth)); }
+        .face-top    { transform: rotateX(90deg) translateZ(var(--cube-depth)); }
+        .face-bottom { transform: rotateX(-90deg) translateZ(var(--cube-depth)); }
+
+        /* Stickers Colors */
+        .color-y { background: #fbbf24; } /* Yellow */
+        .color-w { background: #ffffff; } /* White */
+        .color-b { background: #2563eb; } /* Blue */
+        .color-g { background: #16a34a; } /* Green */
+        .color-o { background: #ea580c; } /* Orange */
+        .color-r { background: #dc2626; } /* Red */
+
+        /* Tab Buttons & Navigation */
+        .tab-btn {
+            position: relative;
+            transition: all 0.25s ease;
+        }
+
+        .tab-btn.active {
+            color: #38bdf8;
+            text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+        }
+
+        .tab-pane {
+            display: none;
+            opacity: 0;
+            transform: translateY(10px) scale(0.992);
+            transform-origin: top center;
+        }
+
+        .tab-pane.active {
+            display: block;
+            animation: tabPaneIn 0.34s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .tab-pane.tab-exit {
+            display: block;
+            position: absolute;
+            left: 0;
+            right: 0;
+            width: 100%;
+            pointer-events: none;
+            animation: tabPaneOut 0.22s ease forwards;
+        }
+
+        @keyframes tabPaneIn {
+            from { opacity: 0; transform: translateY(12px) scale(0.992); filter: blur(3px); }
+            to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+
+        @keyframes tabPaneOut {
+            from { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+            to { opacity: 0; transform: translateY(-8px) scale(0.994); filter: blur(3px); }
+        }
+
+        body.dashboard-active .tab-pane.active {
+            min-height: var(--tab-viewport-height, calc(100vh - 154px));
+        }
+
+        body.lock-tab-scroll #dashboard {
+            padding-bottom: 0 !important;
+        }
+
+        body.lock-tab-scroll .tab-pane.active {
+            height: var(--tab-viewport-height, calc(100vh - 154px));
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        body.lock-tab-scroll .tab-pane.active > * {
+            margin-top: 0 !important;
+        }
+
+        body.lock-tab-scroll #tab-resumen.active {
+            display: grid;
+            grid-template-rows: auto auto minmax(0, 1fr);
+            gap: 1rem;
+        }
+
+        body.lock-tab-scroll #tab-resumen.active > * {
+            margin-top: 0 !important;
+        }
+
+        body.lock-tab-scroll #summary-trend-panel {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.lock-tab-scroll #summary-trend-chart-wrap {
+            flex: 1;
+            min-height: 210px;
+            height: auto !important;
+        }
+
+        body.lock-tab-scroll #tab-resumen .premium-card {
+            border-radius: 1rem;
+        }
+
+        .summary-stat-card {
+            --stat-accent-rgb: 56, 189, 248;
+            border-left-width: 1px !important;
+            border-color: rgba(148, 163, 184, 0.08) !important;
+            box-shadow:
+                inset 3px 0 0 rgba(var(--stat-accent-rgb), 0.72),
+                0 16px 32px -18px rgba(0, 0, 0, 0.78),
+                inset 0 1px 1px rgba(255, 255, 255, 0.045);
+            isolation: isolate;
+        }
+
+        .summary-stat-card.border-l-sky-500,
+        .summary-stat-card.border-l-sky-400 { --stat-accent-rgb: 56, 189, 248; }
+        .summary-stat-card.border-l-emerald-400,
+        .summary-stat-card.border-l-emerald-500 { --stat-accent-rgb: 52, 211, 153; }
+        .summary-stat-card.border-l-amber-500,
+        .summary-stat-card.border-l-amber-400 { --stat-accent-rgb: 245, 158, 11; }
+        .summary-stat-card.border-l-purple-400,
+        .summary-stat-card.border-l-purple-500 { --stat-accent-rgb: 168, 85, 247; }
+        .summary-stat-card.border-l-cyan-300,
+        .summary-stat-card.border-l-cyan-400 { --stat-accent-rgb: 103, 232, 249; }
+        .summary-stat-card.border-l-yellow-300,
+        .summary-stat-card.border-l-yellow-400 { --stat-accent-rgb: 253, 224, 71; }
+        .summary-stat-card.border-l-orange-500 { --stat-accent-rgb: 249, 115, 22; }
+        .summary-stat-card.border-l-rose-500 { --stat-accent-rgb: 244, 63, 94; }
+        .summary-stat-card.border-l-fuchsia-400 { --stat-accent-rgb: 232, 121, 249; }
+        .summary-stat-card.border-l-indigo-400 { --stat-accent-rgb: 129, 140, 248; }
+        .summary-stat-card.border-l-blue-400 { --stat-accent-rgb: 96, 165, 250; }
+        .summary-stat-card.border-l-slate-300,
+        .summary-stat-card.border-l-slate-600 { --stat-accent-rgb: 148, 163, 184; }
+        .summary-stat-card.border-l-white { --stat-accent-rgb: 255, 255, 255; }
+
+        .summary-stat-card:hover {
+            transform: translateY(-1px);
+            border-color: rgba(var(--stat-accent-rgb), 0.24) !important;
+            box-shadow:
+                inset 3px 0 0 rgba(var(--stat-accent-rgb), 0.95),
+                0 20px 38px -20px rgba(0, 0, 0, 0.82),
+                0 0 22px rgba(var(--stat-accent-rgb), 0.10),
+                inset 0 1px 1px rgba(255, 255, 255, 0.06);
+        }
+
+        .summary-stat-card::before {
+            background: radial-gradient(
+                360px circle at var(--mouse-x, 0) var(--mouse-y, 0),
+                rgba(var(--stat-accent-rgb), 0.26),
+                transparent 52%
+            );
+        }
+
+        .summary-stat-card::after {
+            background:
+                linear-gradient(90deg, rgba(var(--stat-accent-rgb), 0.075), transparent 42%),
+                radial-gradient(
+                    300px circle at var(--mouse-x, 0) var(--mouse-y, 0),
+                    rgba(var(--stat-accent-rgb), 0.055),
+                    transparent 52%
+                );
+        }
+
+        body.lock-tab-scroll #tab-explorador.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.lock-tab-scroll #tab-explorador > .premium-card {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.lock-tab-scroll #tab-tendencias.active {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+
+        body.lock-tab-scroll #tab-tendencias.active > .grid {
+            display: contents;
+        }
+
+        body.lock-tab-scroll #tab-tendencias .premium-card,
+        body.lock-tab-scroll #tab-habitos .premium-card {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem !important;
+        }
+
+        body.lock-tab-scroll #tab-tendencias .premium-card > div:first-child,
+        body.lock-tab-scroll #tab-habitos .premium-card > h3 {
+            margin-bottom: 0.75rem !important;
+            padding-bottom: 0.75rem !important;
+        }
+
+        body.lock-tab-scroll #tab-tendencias .premium-card > div:last-child,
+        body.lock-tab-scroll #tab-habitos .habit-chart-wrap {
+            flex: 1;
+            min-height: 0;
+            height: auto !important;
+        }
+
+        body.lock-tab-scroll #tab-tendencias h3,
+        body.lock-tab-scroll #tab-habitos h3 {
+            font-size: 1rem;
+            line-height: 1.2;
+        }
+
+        body.lock-tab-scroll #tab-tendencias p {
+            line-height: 1.25;
+        }
+
+        body.lock-tab-scroll #tab-actividad.active,
+        body.lock-tab-scroll #tab-habitos.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.lock-tab-scroll #tab-actividad > .premium-card {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 1.25rem !important;
+        }
+
+        body.lock-tab-scroll #tab-actividad .activity-heatmap-scroll {
+            flex: 1;
+            min-height: 0;
+            align-items: flex-start;
+            align-content: flex-start;
+            justify-content: flex-start;
+            padding-top: 1.1rem;
+            overflow: auto;
+        }
+
+        body.lock-tab-scroll #heatmap-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+            gap: 1.55rem 1.75rem;
+            width: 100%;
+            align-content: flex-start;
+            align-items: flex-start;
+        }
+
+        .heatmap-month {
+            width: max-content;
+        }
+
+        .heatmap-month-grid,
+        .heatmap-weekday-labels {
+            grid-template-rows: repeat(7, 18px);
+            gap: 6px;
+        }
+
+        .heatmap-day-cell {
+            width: 18px;
+            height: 18px;
+        }
+
+        .heatmap-month-shell {
+            background: rgba(2, 6, 23, 0.32);
+            border: 1px solid rgba(30, 41, 59, 0.72);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+
+        .heatmap-month-future {
+            opacity: 0.5;
+            filter: grayscale(0.75);
+        }
+
+        .heatmap-pager-btn {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 9999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(51, 65, 85, 0.9);
+            background: rgba(15, 23, 42, 0.72);
+            color: #94a3b8;
+            transition: all 0.2s ease;
+        }
+
+        .heatmap-pager-btn:hover:not(:disabled) {
+            color: #f8fafc;
+            border-color: rgba(52, 211, 153, 0.55);
+            box-shadow: 0 0 18px rgba(16, 185, 129, 0.13);
+        }
+
+        .heatmap-pager-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        body.lock-tab-scroll #tab-actividad .activity-legend {
+            margin-top: auto !important;
+        }
+
+        body.lock-tab-scroll #tab-proporciones.active {
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr);
+            gap: 1rem;
+        }
+
+        body.lock-tab-scroll #tab-proporciones.active > .grid {
+            min-height: 0;
+            height: 100%;
+        }
+
+        body.lock-tab-scroll #tab-proporciones.active > .grid > .premium-card {
+            min-height: 0;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem !important;
+        }
+
+        body.lock-tab-scroll #tab-proporciones .target-card {
+            gap: 0.9rem;
+        }
+
+        body.lock-tab-scroll #tab-proporciones .target-card > div:first-child {
+            flex-shrink: 0;
+        }
+
+        body.lock-tab-scroll #tab-proporciones .target-progress-area {
+            min-height: 0;
+            justify-content: center;
+        }
+
+        body.lock-tab-scroll #tab-proporciones .target-ring {
+            width: clamp(12rem, 32vh, 15rem);
+            height: clamp(12rem, 32vh, 15rem);
+        }
+
+        body.lock-tab-scroll #tab-proporciones .dist-chart-wrap {
+            flex: 1;
+            min-height: 0;
+            height: auto !important;
+            padding: 0.35rem;
+        }
+
+        body.lock-tab-scroll #tab-proporciones .dist-chart-wrap canvas,
+        body.lock-tab-scroll #tab-habitos .habit-chart-wrap canvas,
+        body.lock-tab-scroll #tab-tendencias canvas,
+        body.lock-tab-scroll #tab-explorador canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        body.lock-tab-scroll #tab-habitos.active > .grid {
+            flex: 1;
+            min-height: 0;
+            width: 100%;
+        }
+
+        body.lock-tab-scroll #tab-explorador .explorer-table-wrap {
+            flex: 1;
+            min-height: 0;
+            overflow-x: auto;
+            overflow-y: auto;
+        }
+
+        body.lock-tab-scroll #tab-explorador .explorer-table-wrap table {
+            height: auto;
+            min-height: 100%;
+            table-layout: fixed;
+        }
+
+        body.lock-tab-scroll #tab-explorador .explorer-table-wrap tbody tr {
+            height: 40px;
+        }
+
+        body.lock-tab-scroll #tab-explorador .explorer-pagination-wrap {
+            flex-shrink: 0;
+        }
+
+        #rankModal .rank-dialog-panel {
+            opacity: 0;
+            transform: translateY(18px) scale(0.96);
+            transition: opacity 0.22s ease, transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        #rankModal.rank-open .rank-dialog-panel {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+
+        @media (max-width: 1023px) {
+            body.lock-tab-scroll #tab-tendencias.active {
+                grid-template-columns: 1fr;
+                grid-template-rows: repeat(4, minmax(0, 1fr));
+            }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #02040a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #1f293d;
+            border-radius: 10px;
+            border: 2px solid #02040a;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3b82f6;
+        }
+
+        /* Buttons & Form controls */
+        .btn-premium {
+            background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+            box-shadow: 0 4px 20px rgba(79, 70, 229, 0.3);
+            transition: all 0.25s ease;
+        }
+
+        .btn-premium:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 25px rgba(79, 70, 229, 0.4);
+            background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+        }
+
+        .btn-premium:active {
+            transform: translateY(1px);
+        }
+
+        .ctrl-btn {
+            background: rgba(30, 41, 59, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.2s;
+            border-radius: 0.5rem;
+        }
+
+        .ctrl-btn.active {
+            background: linear-gradient(135deg, #0284c7 0%, #3b82f6 100%);
+            border-color: #38bdf8;
+            color: white;
+            box-shadow: 0 4px 15px rgba(14, 165, 233, 0.25);
+        }
+
+        .switch-track {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px;
+            border-radius: 999px;
+            background: rgba(2, 6, 23, 0.72);
+            border: 1px solid rgba(51, 65, 85, 0.75);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        .switch-option {
+            border-radius: 999px;
+            padding: 0.38rem 0.8rem;
+            font-size: 0.72rem;
+            line-height: 1;
+            font-weight: 800;
+            color: #94a3b8;
+            transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .switch-option:hover {
+            color: #e2e8f0;
+            transform: translateY(-1px);
+        }
+
+        .switch-option.active,
+        .switch-option:has(input:checked) {
+            color: white;
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.95), rgba(99, 102, 241, 0.95));
+            box-shadow: 0 6px 18px rgba(56, 189, 248, 0.22);
+        }
+
+        .toggle-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.74rem;
+            font-weight: 800;
+            color: #cbd5e1;
+        }
+
+        .toggle-switch input {
+            display: none;
+        }
+
+        .toggle-slider {
+            width: 42px;
+            height: 23px;
+            border-radius: 999px;
+            padding: 3px;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(71, 85, 105, 0.8);
+            transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            display: block;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: #94a3b8;
+            transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: linear-gradient(135deg, #0284c7, #4f46e5);
+            border-color: rgba(125, 211, 252, 0.65);
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.22);
+        }
+
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(19px);
+            background: white;
+        }
+
+        /* Segmented Capsule Control for Distributions */
+        .dist-pill {
+            border-radius: 9999px !important;
+            transition: all 0.2s ease;
+        }
+        .dist-pill.active {
+            background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+            border-color: #60a5fa;
+            color: white;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+        }
+
+        .custom-date-panel {
+            display: grid;
+            grid-template-rows: 0fr;
+            max-width: 0;
+            opacity: 0;
+            overflow: hidden;
+            pointer-events: none;
+            transform: translateY(-4px);
+            transition: grid-template-rows 0.25s ease, max-width 0.25s ease, opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        .custom-date-panel.open {
+            grid-template-rows: 1fr;
+            max-width: 420px;
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(0);
+        }
+
+        .custom-date-panel > div {
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        @media (max-width: 768px) {
+            .custom-date-panel.open {
+                max-width: 100%;
+            }
+        }
+
+        .search-hit {
+            color: #f8fafc;
+            background: rgba(56, 189, 248, 0.2);
+            border: 1px solid rgba(56, 189, 248, 0.22);
+            border-radius: 0.25rem;
+            padding: 0 0.12rem;
+        }
+
+        /* Heatmap styling */
+        .heatmap-square {
+            transition: all 0.15s ease;
+        }
+        .heatmap-square:hover {
+            transform: scale(1.25);
+            z-index: 30;
+            outline: 2px solid white;
+            border-radius: 3px;
+        }
+
+        /* Elegant Toast Container */
+        #toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 100;
+            max-width: 320px;
+        }
+
+        .toast-card {
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-left: 4px solid #38bdf8;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            transform: translateX(120%);
+            transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .toast-card.show {
+            transform: translateX(0);
+        }
+
+        /* Fast scramble animation */
+        .scrambling-fast {
+            animation: scrambleCube 0.6s infinite linear !important;
+        }
+        @keyframes scrambleCube {
+            0% { transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg); }
+            100% { transform: rotateX(720deg) rotateY(1080deg) rotateZ(360deg); }
+        }
+
+        /* Solving flash */
+        .solving-flash {
+            animation: solveFlash 0.7s ease-out forwards;
+        }
+        @keyframes solveFlash {
+            0% { filter: brightness(1) drop-shadow(0 0 0px rgba(16, 185, 129, 0)); }
+            50% { filter: brightness(2) drop-shadow(0 0 35px rgba(16, 185, 129, 0.85)); }
+            100% { filter: brightness(1) drop-shadow(0 0 0px rgba(16, 185, 129, 0)); }
+        }
+    </style>
+</head>
+
+<body class="min-h-screen flex flex-col relative antialiased select-none welcome-active">
+
+    <!-- Loading Overlay for CSV load and simulation -->
+    <div id="loading-overlay" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#02040c]/90 backdrop-blur-lg transition-all duration-500 opacity-0 pointer-events-none">
+        <div class="flex flex-col items-center max-w-sm px-6 text-center space-y-6">
+            <!-- Large interactive cube for loading -->
+            <div class="cube-viewport w-32 h-32">
+                <div id="loading-cube" class="rubik-cube-3d">
+                    <div class="cube-face face-front"><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div></div>
+                    <div class="cube-face face-back"><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div></div>
+                    <div class="cube-face face-left"><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div></div>
+                    <div class="cube-face face-right"><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div></div>
+                    <div class="cube-face face-top"><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div></div>
+                    <div class="cube-face face-bottom"><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div></div>
+                </div>
+            </div>
+            
+            <div class="space-y-2">
+                <h3 id="loading-status-title" class="text-xl font-black text-white bg-gradient-to-r from-sky-400 to-indigo-300 bg-clip-text text-transparent">Scrambleando Cubo...</h3>
+                <p id="loading-status-text" class="text-xs text-slate-400 font-mono">Mezclando el cubo virtual para procesar CSV...</p>
+            </div>
+            
+            <!-- Progress Line -->
+            <div class="w-48 h-1 bg-slate-800 rounded-full overflow-hidden relative">
+                <div id="loading-progress-bar" class="absolute top-0 left-0 bottom-0 bg-gradient-to-r from-sky-500 to-indigo-500 rounded-full transition-all duration-300" style="width: 0%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ambient light spots -->
+    <div class="glow-blob blob-1"></div>
+    <div class="glow-blob blob-2"></div>
+    <div class="glow-blob blob-3"></div>
+
+    <!-- Navigation Header -->
+    <header class="app-shell glass-panel sticky top-4 my-4 p-3 z-40 premium-card rounded-2xl flex flex-col xl:flex-row gap-3 xl:gap-5 xl:items-center bg-[#090d19]/80">
+        <div class="flex items-center space-x-4 shrink-0">
+            <!-- 3D Mini Cube in Header -->
+            <div class="cube-viewport w-10 h-10 overflow-hidden cursor-pointer" onclick="window.location.reload()">
+                <div class="rubik-cube-3d cube-mini">
+                    <div class="cube-face face-front"><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div><div class="color-o"></div></div>
+                    <div class="cube-face face-back"><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div><div class="color-r"></div></div>
+                    <div class="cube-face face-left"><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div><div class="color-g"></div></div>
+                    <div class="cube-face face-right"><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div><div class="color-b"></div></div>
+                    <div class="cube-face face-top"><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div><div class="color-y"></div></div>
+                    <div class="cube-face face-bottom"><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div><div class="color-w"></div></div>
+                </div>
+            </div>
+            <div>
+                <h1 class="text-xl font-extrabold tracking-tight leading-none bg-gradient-to-r from-sky-400 via-indigo-200 to-white bg-clip-text text-transparent">
+                    CubeTracker <span class="text-sky-400 font-medium text-xs tracking-widest uppercase align-super">Ultra</span>
+                </h1>
+                <p class="text-[10px] text-slate-400 tracking-wider uppercase font-mono">Advanced Cuber Analytics</p>
+            </div>
+        </div>
+
+        <div id="tab-nav-container" class="relative hidden flex-1 min-w-0 gap-1.5 overflow-x-auto p-1.5 bg-[#060813]/80 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-[0_18px_45px_rgba(0,0,0,0.25)]">
+            <div id="tab-sliding-pill" class="absolute bg-gradient-to-r from-sky-500/20 to-indigo-500/25 border border-sky-400/35 rounded-xl transition-all duration-300 ease-out pointer-events-none z-0 shadow-[0_0_22px_rgba(56,189,248,0.12)]" style="height: 0px; width: 0px; left: 0px; top: 0px;"></div>
+            <button class="tab-btn z-10 py-2.5 px-3 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap active" onclick="switchTab('resumen', this)">
+                <i class="fas fa-tachometer-alt mr-2 text-sky-400"></i>Resumen
+            </button>
+            <button class="tab-btn z-10 py-2.5 px-3 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" onclick="switchTab('tendencias', this)">
+                <i class="fas fa-chart-line mr-2 text-purple-400"></i>Evolución
+            </button>
+            <button class="tab-btn z-10 py-2.5 px-3 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" onclick="switchTab('actividad', this)">
+                <i class="fas fa-calendar-check mr-2 text-emerald-400"></i>Actividad
+            </button>
+            <button class="tab-btn z-10 py-2.5 px-3 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" onclick="switchTab('proporciones', this)">
+                <i class="fas fa-chart-pie mr-2 text-pink-400"></i>Distribuciones
+            </button>
+            <button class="tab-btn z-10 py-2.5 px-3 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" onclick="switchTab('habitos', this)">
+                <i class="fas fa-clock mr-2 text-amber-400"></i>Hábitos
+            </button>
+            <button class="tab-btn z-10 py-2.5 px-3 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" onclick="switchTab('explorador', this)">
+                <i class="fas fa-search mr-2 text-indigo-400"></i>Explorador
+            </button>
+        </div>
+        <input type="file" id="csvUpload" accept=".csv" class="hidden">
+    </header>
+
+    <!-- Welcome / Landing Hero Panel -->
+    <main class="app-shell flex-1 p-4 md:p-8 flex flex-col items-center justify-center relative" id="welcome-view">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 xl:gap-16 items-center w-full">
+            
+            <!-- Left Info Panel -->
+            <div class="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left z-10">
+                <h2 class="text-[clamp(3.2rem,7vw,8.5rem)] font-black leading-[0.82] tracking-tight text-white">
+                    CubeTracker
+                    <span class="block bg-gradient-to-r from-sky-300 via-indigo-200 to-emerald-300 bg-clip-text text-transparent">Ultra</span>
+                </h2>
+                <div class="mt-8 flex items-center justify-center lg:justify-start">
+                    <label for="csvUpload" class="cursor-pointer btn-premium text-white px-7 py-3.5 rounded-xl font-bold transition-all flex items-center gap-3 text-base">
+                        <i class="fas fa-folder-open text-purple-400"></i>
+                        <span>Seleccionar Archivo Local</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Right Interactive Cubing Area -->
+            <div class="lg:col-span-5 flex flex-col items-center justify-center relative">
+                <!-- Glowing Aura Behind Cube -->
+                <div class="absolute w-60 h-60 bg-gradient-to-tr from-sky-500/10 to-purple-500/20 blur-3xl rounded-full"></div>
+                
+                <!-- Welcome Upload Drag zone -->
+                <div id="dropzone" class="premium-card p-8 md:p-10 w-full max-w-md min-h-[380px] flex flex-col items-center justify-center text-center upload-zone border-2 border-dashed cursor-pointer">
+                    
+                    <!-- 3D Spinning Cube Wrapper -->
+                    <div class="cube-viewport mb-8 mt-2">
+                        <div class="rubik-cube-3d">
+                            <!-- FRONT -->
+                            <div class="cube-face face-front">
+                                <div class="color-b"></div><div class="color-b"></div><div class="color-b"></div>
+                                <div class="color-b"></div><div class="color-b"></div><div class="color-b"></div>
+                                <div class="color-b"></div><div class="color-b"></div><div class="color-b"></div>
+                            </div>
+                            <!-- BACK -->
+                            <div class="cube-face face-back">
+                                <div class="color-g"></div><div class="color-g"></div><div class="color-g"></div>
+                                <div class="color-g"></div><div class="color-g"></div><div class="color-g"></div>
+                                <div class="color-g"></div><div class="color-g"></div><div class="color-g"></div>
+                            </div>
+                            <!-- LEFT -->
+                            <div class="cube-face face-left">
+                                <div class="color-o"></div><div class="color-o"></div><div class="color-o"></div>
+                                <div class="color-o"></div><div class="color-o"></div><div class="color-o"></div>
+                                <div class="color-o"></div><div class="color-o"></div><div class="color-o"></div>
+                            </div>
+                            <!-- RIGHT -->
+                            <div class="cube-face face-right">
+                                <div class="color-r"></div><div class="color-r"></div><div class="color-r"></div>
+                                <div class="color-r"></div><div class="color-r"></div><div class="color-r"></div>
+                                <div class="color-r"></div><div class="color-r"></div><div class="color-r"></div>
+                            </div>
+                            <!-- TOP -->
+                            <div class="cube-face face-top">
+                                <div class="color-y"></div><div class="color-y"></div><div class="color-y"></div>
+                                <div class="color-y"></div><div class="color-y"></div><div class="color-y"></div>
+                                <div class="color-y"></div><div class="color-y"></div><div class="color-y"></div>
+                            </div>
+                            <!-- BOTTOM -->
+                            <div class="cube-face face-bottom">
+                                <div class="color-w"></div><div class="color-w"></div><div class="color-w"></div>
+                                <div class="color-w"></div><div class="color-w"></div><div class="color-w"></div>
+                                <div class="color-w"></div><div class="color-w"></div><div class="color-w"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <i class="fas fa-file-csv text-4xl text-sky-400 mb-3 animate-bounce"></i>
+                    <h3 class="text-xl font-bold text-slate-100">Suelta tu CSV aquí</h3>
+                    <p class="text-xs text-slate-400 mt-2 leading-relaxed">Arrastra tu archivo exportado desde CubeDesk o haz clic para seleccionarlo.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Main Dashboard Application -->
+    <main class="app-shell flex-1 py-4 md:py-8 pt-0 hidden" id="dashboard">
+        
+        <!-- 1. TAB: RESUMEN GENERAL -->
+        <div id="tab-resumen" class="tab-pane active space-y-6">
+            
+            <!-- Quick Stat Widgets -->
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                
+                <div class="summary-stat-card premium-card p-4 flex flex-col justify-center border-l-4 border-l-sky-500">
+                    <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1 font-semibold">Total Resoluciones</p>
+                    <p class="text-3xl font-black text-white mono-text" id="st-total">-</p>
+                </div>
+                
+                <div class="summary-stat-card premium-card p-4 flex flex-col justify-center border-l-4 border-l-emerald-400">
+                    <div class="flex justify-between items-start">
+                        <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1 font-semibold">Mejor Single</p>
+                        <i class="fas fa-trophy text-emerald-400 text-xs"></i>
+                    </div>
+                    <p class="text-3xl font-black text-emerald-400 mono-text" id="st-single">-</p>
+                </div>
+                
+                <div class="summary-stat-card premium-card p-4 flex flex-col justify-center border-l-4 border-l-sky-400">
+                    <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1 font-semibold">Mejor AO5</p>
+                    <p class="text-3xl font-black text-sky-400 mono-text" id="st-ao5">-</p>
+                </div>
+                
+                <div class="summary-stat-card premium-card p-4 flex flex-col justify-center border-l-4 border-l-amber-500">
+                    <p class="text-[10px] text-amber-200/50 uppercase tracking-wider mb-1 font-semibold">AO1000 Actual</p>
+                    <p class="text-3xl font-black text-amber-400 mono-text" id="st-curr-ao100">-</p>
+                </div>
+                
+                <div class="summary-stat-card premium-card p-4 flex flex-col justify-center border-l-4 border-l-purple-400">
+                    <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1 font-semibold">Desviación Est.</p>
+                    <p class="text-3xl font-black text-purple-400 mono-text" id="st-sd">-</p>
+                </div>
+
+                <div id="rank-panel" class="summary-stat-card premium-card p-4 flex flex-col justify-center items-center text-center cursor-pointer border-l-4 border-l-slate-600" onclick="openRankModal()" title="Ver tabla de rangos">
+                    <p class="text-[10px] uppercase tracking-wider text-slate-300 mb-1 font-semibold">Rango Cuber</p>
+                    <p class="text-xl font-extrabold" id="st-rank-name">-</p>
+                </div>
+            </div>
+
+            <!-- Glowing Personal Bests Record Showcase Card Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+                
+                <!-- Best Single Card -->
+                <div class="premium-card p-5 bg-gradient-to-b from-emerald-950/20 to-transparent">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-xs uppercase tracking-wider font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">Récord Single</span>
+                        <span class="text-[10px] text-slate-500 font-mono" id="pb-single-date">-</span>
+                    </div>
+                    <div class="text-3xl font-black text-white font-mono" id="pb-single-val">-</div>
+                    <div class="mt-4 flex flex-col space-y-1">
+                        <p class="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Scramble</p>
+                        <div class="flex items-center justify-between gap-1">
+                            <span class="text-[10px] font-mono text-slate-400 truncate max-w-[150px]" id="pb-single-scramble">-</span>
+                            <button id="pb-single-copy-btn" class="text-slate-500 hover:text-slate-300 transition-colors p-1" title="Copiar Scramble">
+                                <i class="far fa-copy text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Best AO5 Card -->
+                <div class="premium-card p-5 bg-gradient-to-b from-sky-950/20 to-transparent">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-xs uppercase tracking-wider font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded">Récord AO5</span>
+                        <span class="text-[10px] text-slate-500 font-mono" id="pb-ao5-date">-</span>
+                    </div>
+                    <div class="text-3xl font-black text-white font-mono" id="pb-ao5-val">-</div>
+                    <div class="mt-4 flex flex-col space-y-1">
+                        <p class="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Tiempos</p>
+                        <span class="text-[10px] font-mono text-slate-400" id="pb-ao5-list">-</span>
+                    </div>
+                </div>
+
+                <!-- Best AO12 Card -->
+                <div class="premium-card p-5 bg-gradient-to-b from-purple-950/20 to-transparent">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-xs uppercase tracking-wider font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded">Récord AO12</span>
+                        <span class="text-[10px] text-slate-500 font-mono" id="pb-ao12-date">-</span>
+                    </div>
+                    <div class="text-3xl font-black text-white font-mono" id="pb-ao12-val">-</div>
+                    <div class="mt-4 flex flex-col space-y-1">
+                        <p class="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Tiempos</p>
+                        <span class="text-[10px] font-mono text-slate-400 truncate" id="pb-ao12-list">-</span>
+                    </div>
+                </div>
+
+                <!-- Session Streak Info Card -->
+                <div class="premium-card p-5 bg-gradient-to-b from-pink-950/20 to-transparent flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-xs uppercase tracking-wider font-bold text-pink-400 bg-pink-500/10 px-2 py-0.5 rounded"><i class="fas fa-fire mr-1"></i>Racha de Práctica</span>
+                        </div>
+                        <div class="flex items-baseline space-x-2">
+                            <span class="text-4xl font-black text-white font-mono" id="streak-curr-val">0</span>
+                            <span class="text-slate-400 text-xs">días activos</span>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-800/60 flex justify-between text-xs">
+                        <span class="text-slate-500">Racha más larga:</span>
+                        <span class="font-mono text-pink-300 font-bold" id="streak-max-val">0 días</span>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Historical Progression Chart Panel -->
+            <div id="summary-trend-panel" class="premium-card p-5 mt-0">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 border-b border-slate-800/80 pb-3">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+                            <i class="fas fa-chart-line text-sky-400"></i>Línea de Tendencia Histórica
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-1">Oculta los "singles" individuales para observar tu línea de tendencia limpia de progreso.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-3 items-center">
+                        <label class="toggle-switch">
+                            <input id="toggle-singles-input" type="checkbox" checked onchange="toggleSingles(this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span id="btn-toggle-singles"><i class="fas fa-eye mr-1 text-sky-400"></i> Singles</span>
+                        </label>
+                        <div class="switch-track">
+                            <button id="btn-ao50" class="switch-option active" onclick="setTrendType('ao50')">AO50</button>
+                            <button id="btn-ao100" class="switch-option" onclick="setTrendType('ao100')">AO100</button>
+                            <button id="btn-ao500" class="switch-option" onclick="setTrendType('ao500')">AO500</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="summary-trend-chart-wrap" class="h-[300px] w-full"><canvas id="mainTrendChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- 2. TAB: TENDENCIAS Y PBS -->
+        <div id="tab-tendencias" class="tab-pane space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                <!-- Average Speeds Card -->
+                <div class="premium-card p-6">
+                    <div class="flex justify-between items-center mb-6 border-b border-slate-800/80 pb-4">
+                        <h3 class="text-lg font-bold text-slate-200 flex items-center gap-2">
+                            <i class="fas fa-bar-chart text-sky-400"></i>Velocidad Promedio Temporal
+                        </h3>
+                        <div class="switch-track">
+                            <button id="btn-monthly" class="switch-option active" onclick="setTimeframe('monthly')">Mensual</button>
+                            <button id="btn-weekly" class="switch-option" onclick="setTimeframe('weekly')">Semanal</button>
+                        </div>
+                    </div>
+                    <div class="h-[260px] w-full"><canvas id="barChart"></canvas></div>
+                </div>
+
+                <!-- Weekly Delta Card -->
+                <div class="premium-card p-6 border-l-4 border-l-emerald-500">
+                    <div class="mb-6 border-b border-slate-800/80 pb-4">
+                        <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                            <i class="fas fa-arrow-down-up-across-line"></i>Variación Semanal (Deltas)
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-1">Muestra la ganancia/pérdida de velocidad en milisegundos. Verde = Reducción, Rojo = Aumento.</p>
+                    </div>
+                    <div class="h-[260px] w-full"><canvas id="deltaChart"></canvas></div>
+                </div>
+            </div>
+
+            <!-- Consistency Rate Area Card -->
+            <div class="premium-card p-6 border-l-4 border-l-blue-500">
+                <div class="mb-6 border-b border-slate-800/80 pb-4">
+                    <h3 class="text-lg font-bold text-blue-400 flex items-center gap-2">
+                        <i class="fas fa-check-double"></i>Tasa de Consistencia (Últimos 100 Solves)
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1">Porcentaje de resoluciones consecutivas que caen por debajo de los hitos principales Sub-10, Sub-12 o Sub-15.</p>
+                </div>
+                <div class="h-[300px] w-full"><canvas id="consistencyChart"></canvas></div>
+            </div>
+
+            <!-- Stepped PB Evolution Card -->
+            <div class="premium-card p-6 border-l-4 border-l-purple-500">
+                <div class="mb-6 border-b border-slate-800/80 pb-4">
+                    <h3 class="text-lg font-bold text-purple-400 flex items-center gap-2">
+                        <i class="fas fa-trophy"></i>Evolución Histórica de PBs (Marcas Personales)
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1">Gráfico de líneas escalonadas que detalla cada récord histórico y el momento en que se rompió.</p>
+                </div>
+                <div class="h-[350px] w-full"><canvas id="pbChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- 3. TAB: ACTIVIDAD HISTORICA -->
+        <div id="tab-actividad" class="tab-pane space-y-6">
+            <div class="premium-card p-6 border-l-4 border-l-emerald-500">
+                
+                <!-- Header Stats inside activity -->
+                <div class="flex flex-col md:flex-row justify-between md:items-stretch mb-6 border-b border-slate-800/80 pb-6 gap-6">
+                    <div class="flex-1 min-h-[96px] flex flex-col justify-center">
+                        <h3 class="text-3xl md:text-4xl font-black text-white mb-2 flex items-center gap-3 leading-tight">
+                            <i class="fas fa-calendar-alt text-emerald-400"></i>Mapa de Actividad Histórica
+                        </h3>
+                        <p class="text-sm text-slate-400">Volumen de entrenamiento diario con agrupamiento y etiquetas por mes al estilo GitHub.</p>
+                    </div>
+                    
+                    <div class="flex flex-col gap-3 shrink-0">
+                        <div class="flex gap-6 text-sm bg-slate-900/60 p-4 rounded-xl border border-slate-800 items-center">
+                        <div>
+                            <p class="text-slate-500 text-[10px] uppercase font-mono tracking-wider font-bold">Día más intenso</p>
+                            <p class="text-emerald-400 font-black text-2xl font-mono" id="st-max-day">-</p>
+                            <p class="text-[9px] text-slate-400">solves/día</p>
+                        </div>
+                        <div class="w-px bg-slate-800"></div>
+                        <div>
+                            <p class="text-slate-500 text-[10px] uppercase font-mono tracking-wider font-bold">Total Calculado</p>
+                            <p class="text-white font-black text-2xl font-mono" id="st-heatmap-total">-</p>
+                            <p class="text-[9px] text-slate-400">intentos totales</p>
+                        </div>
+                        </div>
+                        <div class="flex items-center justify-between gap-3 bg-slate-950/55 border border-slate-800/80 rounded-xl px-3 py-2">
+                            <button id="heatmap-prev-page" class="heatmap-pager-btn" onclick="changeHeatmapPage(-1)" title="12 meses anteriores">
+                                <i class="fas fa-chevron-left text-xs"></i>
+                            </button>
+                            <div class="text-center min-w-[11rem]">
+                                <p class="text-[9px] uppercase tracking-[0.2em] text-slate-500 font-bold">Bloque de 12 meses</p>
+                                <p id="heatmap-page-label" class="text-xs text-emerald-300 font-black font-mono">-</p>
+                            </div>
+                            <button id="heatmap-next-page" class="heatmap-pager-btn" onclick="changeHeatmapPage(1)" title="12 meses siguientes">
+                                <i class="fas fa-chevron-right text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Calendar grid container -->
+                <div class="activity-heatmap-scroll flex overflow-auto pb-4">
+                    <div id="weekday-labels" class="hidden">
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">L</div>
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">M</div>
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">X</div>
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">J</div>
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">V</div>
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">S</div>
+                        <div class="flex items-center justify-center" style="width:14px;height:14px;">D</div>
+                    </div>
+
+                    <div id="heatmap-container" class="overflow-visible pt-1">
+                        <!-- Javascript will inject months with grid cubes here -->
+                    </div>
+                </div>
+
+                <!-- Heatmap Color Indicators -->
+                <div class="activity-legend flex items-center justify-end text-[11px] text-slate-400 mt-4 space-x-2 border-t border-slate-800/80 pt-4">
+                    <span>Menos práctica</span>
+                    <div class="w-3.5 h-3.5 rounded-sm bg-slate-900 border border-slate-800/50"></div>
+                    <div class="w-3.5 h-3.5 rounded-sm bg-emerald-950/70 border border-emerald-950"></div>
+                    <div class="w-3.5 h-3.5 rounded-sm bg-emerald-800/80"></div>
+                    <div class="w-3.5 h-3.5 rounded-sm bg-emerald-500"></div>
+                    <div class="w-3.5 h-3.5 rounded-sm bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.5)] border border-emerald-100"></div>
+                    <span>Día intenso</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. TAB: DISTRIBUCIONES (WITH DYNAMIC TIMEFRAME FILTERS) -->
+        <div id="tab-proporciones" class="tab-pane space-y-6">
+            
+            <div class="premium-card p-4 bg-slate-950/35">
+                <div class="flex flex-col gap-3">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center gap-2 text-sm font-black text-white">
+                            <i class="fas fa-filter text-sky-400"></i>
+                            <span>Periodo</span>
+                        </div>
+                        <div id="dist-filter-badge" class="px-3.5 py-1.5 bg-sky-950/60 border border-sky-800/40 rounded-full font-mono text-[10px] text-sky-300 font-bold whitespace-nowrap text-center">
+                            Cargando...
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all active font-semibold" onclick="selectDistTimeframe('all', this)">Todo</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('last100', this)">100</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('last500', this)">500</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('last1000', this)">1k</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('last2000', this)">2k</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('24h', this)">24h</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('7d', this)">7d</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('30d', this)">30d</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('6m', this)">6m</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('1y', this)">1a</button>
+                        <button class="dist-pill text-[11px] px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 transition-all font-semibold" onclick="selectDistTimeframe('custom', this)"><i class="fas fa-calendar mr-1"></i>Custom</button>
+                    </div>
+
+                    <input type="hidden" id="distTimeFilter" value="all">
+
+                    <div id="distCustomDates" class="custom-date-panel">
+                        <div>
+                            <div class="inline-flex items-center space-x-2 bg-slate-900 border border-slate-700 p-1.5 rounded-xl">
+                                <input type="date" id="distStartDate" class="bg-transparent border-0 text-slate-200 text-[11px] px-1 py-0.5 outline-none">
+                                <span class="text-slate-500 text-xs">a</span>
+                                <input type="date" id="distEndDate" class="bg-transparent border-0 text-slate-200 text-[11px] px-1 py-0.5 outline-none">
+                                <button onclick="applyDistributionFilter()" class="bg-sky-600 hover:bg-sky-500 text-white text-[11px] px-3 py-1 rounded-lg transition-colors font-bold">
+                                    Filtrar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Meta Card -->
+                <div class="target-card premium-card p-5 flex flex-col lg:col-span-1 border-t-4 border-t-sky-400 bg-gradient-to-b from-sky-950/10 to-transparent">
+                    <div>
+                        <h3 class="text-lg font-bold mb-2 text-sky-400 flex items-center gap-2">
+                            <i class="fas fa-bullseye animate-pulse"></i>Meta Cuber (Sub-X)
+                        </h3>
+                        <p class="text-xs text-slate-400 mb-6 leading-relaxed">Establece tu meta de velocidad para el período seleccionado y mide tu nivel de logro.</p>
+                        
+                        <!-- Slider container -->
+                        <div class="space-y-4 mb-6">
+                            <div class="flex justify-between items-center">
+                                <span class="text-xs font-semibold text-slate-300">Objetivo Sub-X:</span>
+                                <span class="text-lg font-black text-sky-400 font-mono" id="target-sub-val">12.0s</span>
+                            </div>
+                            <input type="range" id="target-sub-slider" min="8" max="25" step="0.5" value="12" oninput="updateTargetSubGoal()" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500">
+                        </div>
+                    </div>
+
+                    <!-- Circular Progress Container -->
+                    <div class="target-progress-area flex flex-1 min-h-0 flex-col items-center justify-center space-y-4 py-2">
+                        <div class="target-ring relative w-48 h-48 flex items-center justify-center">
+                            <!-- Circular SVG -->
+                            <svg class="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                                <!-- Background Circle -->
+                                <circle class="text-slate-800" stroke-width="6" stroke="currentColor" fill="transparent" r="40" cx="50" cy="50"/>
+                                <!-- Foreground Circle with Glow -->
+                                <circle id="target-progress-circle" class="text-sky-400 transition-all duration-500 ease-out" stroke-width="6" stroke-dasharray="251.2" stroke-dashoffset="251.2" stroke-linecap="round" stroke="currentColor" fill="transparent" r="40" cx="50" cy="50" style="filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.6));"/>
+                            </svg>
+                            <!-- Text in Center -->
+                            <div class="absolute flex flex-col items-center justify-center">
+                                <span class="text-4xl font-black text-white font-mono" id="target-pct-text">0%</span>
+                                <span class="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Logrado</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Mini stats and feedback -->
+                        <div class="text-center w-full px-2">
+                            <p class="text-xs text-slate-300 font-semibold leading-relaxed" id="target-stats-feedback">0 de 0 solves por debajo de 12.0s</p>
+                            <p class="text-[10px] text-slate-400 italic mt-1 leading-relaxed" id="target-motivational-msg">Cargando...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sub-X Distribution -->
+                <div class="premium-card p-5 lg:col-span-1 flex flex-col justify-between">
+                    <h3 class="text-lg font-bold mb-3 border-b border-slate-800/80 pb-2 text-indigo-400 flex items-center gap-2">
+                        <i class="fas fa-chart-pie"></i>Distribución de Hitos
+                    </h3>
+                    <div class="dist-chart-wrap h-[235px] w-full flex justify-center items-center overflow-visible"><canvas id="pieSubX"></canvas></div>
+                </div>
+                
+                <!-- Count by integer seconds -->
+                <div class="premium-card p-5 lg:col-span-1 flex flex-col justify-between">
+                    <div>
+                        <h3 class="text-lg font-bold mb-1 border-b border-slate-800/80 pb-2 text-rose-400 flex items-center gap-2">
+                            <i class="fas fa-stopwatch"></i>Frecuencia por Segundos
+                        </h3>
+                        <p class="text-[10px] text-slate-500 mb-2 text-center leading-normal">Tiempos truncados al segundo entero.</p>
+                    </div>
+                    <div class="dist-chart-wrap h-[235px] w-full flex justify-center items-center overflow-visible"><canvas id="pieSeconds"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. TAB: HABITOS Y VOLUMENES -->
+        <div id="tab-habitos" class="tab-pane space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <!-- Hourly Performance -->
+                <div class="premium-card p-6">
+                    <h3 class="text-lg font-bold mb-6 border-b border-slate-800/80 pb-3 text-amber-400 flex items-center gap-2">
+                        <i class="fas fa-sun"></i>Rendimiento por Hora (Franjas 15min)
+                    </h3>
+                    <div class="habit-chart-wrap h-[300px] w-full"><canvas id="hourlyChart"></canvas></div>
+                </div>
+                
+                <!-- Weekly Volume -->
+                <div class="premium-card p-6">
+                    <h3 class="text-lg font-bold mb-6 border-b border-slate-800/80 pb-3 text-indigo-400 flex items-center gap-2">
+                        <i class="fas fa-calendar-day"></i>Volumen por Día de la Semana
+                    </h3>
+                    <div class="habit-chart-wrap h-[300px] w-full"><canvas id="weekdayChart"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. TAB: INTERACTIVE EXPLORER -->
+        <div id="tab-explorador" class="tab-pane space-y-6">
+            <div class="premium-card p-6">
+                
+                <!-- Controls and Search Panel -->
+                <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 border-b border-slate-800/80 pb-4">
+                    <div class="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
+                        <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2 whitespace-nowrap">
+                            <i class="fas fa-list-ul text-sky-400"></i>Listado de Tiempos
+                        </h3>
+                        
+                        <!-- Search Box -->
+                        <div class="relative w-full md:w-64">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
+                            <input type="text" id="explorerSearch" placeholder="Buscar scramble o tiempo..." oninput="onExplorerSearch()" class="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 outline-none focus:ring-2 focus:ring-sky-500 transition-all">
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
+                        
+                        <!-- Solve Type Filter -->
+                        <input type="hidden" id="filterSelect" value="all">
+                        <div class="switch-track">
+                            <button class="explorer-filter-pill switch-option active" onclick="selectExplorerFilter('all', this)">Todos</button>
+                            <button class="explorer-filter-pill switch-option" onclick="selectExplorerFilter('sub10', this)">Sub-10</button>
+                            <button class="explorer-filter-pill switch-option" onclick="selectExplorerFilter('sub12', this)">Sub-12</button>
+                            <button class="explorer-filter-pill switch-option" onclick="selectExplorerFilter('sub15', this)">Sub-15</button>
+                            <button class="explorer-filter-pill switch-option" onclick="selectExplorerFilter('dnf', this)">DNF</button>
+                            <button class="explorer-filter-pill switch-option" onclick="selectExplorerFilter('plus2', this)">+2</button>
+                        </div>
+                        
+                        <!-- Export Button -->
+                        <button onclick="downloadFilteredCSV()" class="bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all">
+                            <i class="fas fa-file-arrow-down text-emerald-400"></i> <span>Exportar</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Datatable Explorer -->
+                <div class="explorer-table-wrap overflow-x-auto overflow-y-hidden border border-slate-800 rounded-xl">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead class="sticky top-0 bg-[#0f172a] text-slate-300 border-b border-slate-800 shadow-sm z-20">
+                            <tr>
+                                <th class="py-2 px-4 font-bold cursor-pointer hover:bg-slate-800/50" onclick="sortExplorer('index')">
+                                    # <i id="sort-index-icon" class="fas fa-sort text-[10px] ml-1 text-slate-600"></i>
+                                </th>
+                                <th class="py-2 px-4 font-bold cursor-pointer hover:bg-slate-800/50" onclick="sortExplorer('date')">
+                                    Fecha <i id="sort-date-icon" class="fas fa-sort text-[10px] ml-1 text-slate-600"></i>
+                                </th>
+                                <th class="py-2 px-4 font-bold cursor-pointer hover:bg-slate-800/50" onclick="sortExplorer('time')">
+                                    Tiempo <i id="sort-time-icon" class="fas fa-sort text-[10px] ml-1 text-slate-600"></i>
+                                </th>
+                                <th class="py-2 px-4 font-bold">Scramble</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody" class="divide-y divide-slate-800/50 bg-[#080d1a]/20">
+                            <!-- JS populated rows -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Datatable Pagination Controls -->
+                <div class="explorer-pagination-wrap flex flex-col sm:flex-row items-center justify-between mt-4 pt-4 border-t border-slate-800/80 gap-3 text-xs text-slate-400">
+                    <div id="explorer-entry-info">
+                        Mostrando 0 a 0 de 0 elementos
+                    </div>
+                    <div class="flex items-center space-x-1" id="explorer-pagination">
+                        <!-- JS paginator elements -->
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <!-- Path to Perfection Ranks Modal -->
+    <div id="rankModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-[#02040c]/80 backdrop-blur-md transition-all duration-300 opacity-0">
+        <div class="rank-dialog-panel premium-card w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden border-slate-700 shadow-[0_0_80px_rgba(0,0,0,0.8)]">
+            <div class="p-5 border-b border-slate-800 flex justify-between items-center bg-[#0d1223]/90">
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fas fa-medal text-yellow-400"></i> Rango Cuber - Camino al Olimpo
+                </h3>
+                <button onclick="closeRankModal()" class="text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800/50 transition-colors">
+                    <i class="fas fa-times text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-4 overflow-y-auto flex-1 space-y-2 bg-[#060814]/90" id="rankModalContent">
+                <!-- Injected via Javascript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Toasts -->
+    <div id="toast-container"></div>
+
+    <!-- Solve Details Side Drawer Backdrop -->
+    <div id="drawerBackdrop" class="fixed inset-0 z-40 bg-[#02040c]/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300" onclick="closeSolveDrawer()"></div>
+
+    <!-- Side Drawer Panel -->
+    <div id="solveDrawer" class="fixed top-0 right-0 bottom-0 z-50 w-full max-w-lg bg-[#060814]/95 border-l border-slate-800 shadow-[0_0_80px_rgba(0,0,0,0.85)] backdrop-blur-xl transform translate-x-full transition-transform duration-500 ease-out flex flex-col">
+        <!-- Drawer Header -->
+        <div class="p-6 border-b border-slate-800/80 bg-[#0d1223]/50 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500/10 to-indigo-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400" id="drawer-index-icon">
+                    <span class="font-black text-sm font-mono" id="drawer-index-num">#0</span>
+                </div>
+                <div>
+                    <h3 class="font-bold text-white text-base">Detalle de Resolución</h3>
+                    <p class="text-[10px] text-slate-400 font-mono" id="drawer-date-str">--/--/---- --:--:--</p>
+                </div>
+            </div>
+            <button onclick="closeSolveDrawer()" class="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800/50 transition-colors">
+                <i class="fas fa-times text-lg"></i>
+            </button>
+        </div>
+
+        <!-- Drawer Content (Scrollable) -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Large Time Display -->
+            <div class="premium-card p-6 flex flex-col items-center justify-center text-center bg-gradient-to-b from-slate-900/40 to-transparent">
+                <span class="text-[10px] text-slate-400 uppercase tracking-widest font-mono font-bold mb-2">Tiempo Registrado</span>
+                <h2 class="text-5xl font-black text-white font-mono tracking-tight" id="drawer-time-val">00.00s</h2>
+                <div class="mt-3 flex justify-center gap-2" id="drawer-badge-container">
+                    <!-- Status badges (+2, DNF, Sub-10 etc.) -->
+                </div>
+            </div>
+
+            <!-- Scramble Block with Click-to-Copy -->
+            <div class="premium-card p-5">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-xs uppercase tracking-wider font-bold text-slate-400 font-mono"><i class="fas fa-random mr-1.5 text-sky-400"></i>Scramble</span>
+                    <button onclick="copyDrawerScramble()" class="bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono flex items-center gap-1 transition-colors">
+                        <i class="far fa-copy"></i> Copiar
+                    </button>
+                </div>
+                <div class="bg-slate-950/80 border border-slate-800/60 p-4 rounded-xl text-center select-all">
+                    <p class="font-mono text-xs leading-relaxed text-slate-200 tracking-wide" id="drawer-scramble-text">R U R' U' ...</p>
+                </div>
+            </div>
+
+            <!-- 2D Scramble Visualizer (Rubik's Cube SVG Net) -->
+            <div class="premium-card p-5">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-xs uppercase tracking-wider font-bold text-slate-400 font-mono"><i class="fas fa-cubes mr-1.5 text-indigo-400"></i>Estado del Cubo (Net 2D)</span>
+                    <span class="text-[10px] text-slate-500 font-mono">Simulación de Scramble</span>
+                </div>
+                <!-- Visualizer Wrapper -->
+                <div class="bg-slate-950/40 border border-slate-900 rounded-xl p-4 flex flex-col items-center justify-center relative overflow-hidden">
+                    <div id="drawer-net-svg-container" class="w-full flex justify-center">
+                        <!-- SVG code will be injected dynamically -->
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-y-2 gap-x-1 text-[9px] text-slate-500 font-mono mt-3 px-1 border-t border-slate-800/50 pt-3">
+                    <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 bg-white border border-slate-600 rounded-sm inline-block"></span> U (Blanco)</div>
+                    <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 bg-yellow-500 rounded-sm inline-block"></span> D (Amarillo)</div>
+                    <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 bg-green-500 rounded-sm inline-block"></span> F (Verde)</div>
+                    <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 bg-blue-600 rounded-sm inline-block"></span> B (Azul)</div>
+                    <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 bg-orange-500 rounded-sm inline-block"></span> L (Naranja)</div>
+                    <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 bg-red-600 rounded-sm inline-block"></span> R (Rojo)</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drawer Footer (Drawer Controls) -->
+        <div class="p-4 border-t border-slate-800 bg-[#0d1223]/30 flex justify-between items-center gap-4">
+            <button id="drawer-btn-prev" onclick="navigateDrawer(-1)" class="flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2">
+                <i class="fas fa-chevron-left text-sky-400"></i> Anterior
+            </button>
+            <button id="drawer-btn-next" onclick="navigateDrawer(1)" class="flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2">
+                Siguiente <i class="fas fa-chevron-right text-sky-400"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- JavaScript Execution Logic -->
+    <script>
+        // Core Globals
+        let parsedSolves = [];
+        let filteredSolves = [];
+        let distFilteredSolves = [];
+        let charts = {};
+        
+        // Explorer state variables
+        let explorerCurrentPage = 1;
+        let explorerPageSize = 80;
+        let explorerSortColumn = 'index'; // 'index', 'date', 'time'
+        let explorerSortOrder = 'desc'; // 'asc', 'desc'
+        let heatmapPageIndex = 0;
+        let heatmapPageCount = 1;
+        const HEATMAP_MONTHS_PER_PAGE = 12;
+
+        let globalData = {
+            indices: [], singles: [], ao50: [], ao100: [], ao500: [],
+            pbSingle: [], pbAo5: [], pbAo12: [],
+            rate10: [], rate12: [], rate15: [],
+            monthlyData: {}, weeklyData: {}, dailyActivity: {},
+            pies: { subX: [0, 0, 0, 0, 0, 0], secondsBucket: {} }
+        };
+
+        // PB Tracker Objects
+        let pbRecords = {
+            single: null,
+            ao5: null,
+            ao12: null,
+            ao100: null
+        };
+
+        let currentTrend = 'ao50';
+        let showSingles = true;
+        let currentTimeframe = 'monthly';
+        const DASHBOARD_AVERAGE_WINDOW = 1000;
+        let latestValidDashboardAverage = null;
+        let currentDrawerIndex = null;
+        let lastDistributionReferenceDate = null;
+
+        // Custom Cuber Tiers (based on the dashboard's rolling average)
+        const rankTiers = [
+            { limit: 10, name: "Sub-10", desc: "Clase Mundial", textClass: "text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]", bgClass: "bg-gradient-to-b from-slate-500/30 to-slate-900/50 border-white/60", accentClass: "border-l-white", shadow: "shadow-[0_0_30px_rgba(255,255,255,0.3)]" },
+            { limit: 11, name: "Sub-11", desc: "Mítico", textClass: "text-cyan-300 drop-shadow-[0_0_8px_rgba(103,232,249,0.7)]", bgClass: "bg-cyan-950/40 border-cyan-400/70", accentClass: "border-l-cyan-300", shadow: "shadow-[0_0_25px_rgba(34,211,238,0.25)]" },
+            { limit: 12, name: "Sub-12", desc: "Leyenda", textClass: "text-yellow-300 drop-shadow-[0_0_8px_rgba(253,224,71,0.7)]", bgClass: "bg-yellow-950/40 border-yellow-400/60", accentClass: "border-l-yellow-300", shadow: "shadow-[0_0_25px_rgba(234,179,8,0.2)]" },
+            { limit: 13, name: "Sub-13", desc: "Élite", textClass: "text-amber-500", bgClass: "bg-amber-950/20 border-amber-500/50", accentClass: "border-l-amber-500", shadow: "" },
+            { limit: 14, name: "Sub-14", desc: "Gran Maestro", textClass: "text-orange-500", bgClass: "bg-orange-950/20 border-orange-500/50", accentClass: "border-l-orange-500", shadow: "" },
+            { limit: 15, name: "Sub-15", desc: "Maestro", textClass: "text-rose-500", bgClass: "bg-rose-950/20 border-rose-500/50", accentClass: "border-l-rose-500", shadow: "" },
+            { limit: 20, name: "Sub-20", desc: "Experto", textClass: "text-fuchsia-400", bgClass: "bg-fuchsia-950/20 border-fuchsia-500/40", accentClass: "border-l-fuchsia-400", shadow: "" },
+            { limit: 25, name: "Sub-25", desc: "Avanzado", textClass: "text-indigo-400", bgClass: "bg-indigo-950/20 border-indigo-500/40", accentClass: "border-l-indigo-400", shadow: "" },
+            { limit: 30, name: "Sub-30", desc: "Intermedio", textClass: "text-blue-400", bgClass: "bg-blue-950/20 border-blue-500/40", accentClass: "border-l-blue-400", shadow: "" },
+            { limit: 45, name: "Sub-45", desc: "Novato", textClass: "text-emerald-400", bgClass: "bg-emerald-950/20 border-emerald-500/40", accentClass: "border-l-emerald-400", shadow: "" },
+            { limit: 60, name: "Sub-60", desc: "Principiante", textClass: "text-slate-300", bgClass: "bg-slate-900 border-slate-700", accentClass: "border-l-slate-300", shadow: "" },
+            { limit: Infinity, name: "1 Minuto+", desc: "Iniciado", textClass: "text-slate-500", bgClass: "bg-slate-900/60 border-slate-800", accentClass: "border-l-slate-600", shadow: "" }
+        ];
+
+        function getRank(average) {
+            if (average === null || average === Infinity) return rankTiers[rankTiers.length - 1];
+            return rankTiers.find(r => average < r.limit);
+        }
+
+        function openRankModal() {
+            const modal = document.getElementById('rankModal');
+            const content = document.getElementById('rankModalContent');
+            const currentRankLabel = document.getElementById('st-rank-name')?.innerText.trim();
+            const currentRank = rankTiers.find(tier => tier.name === currentRankLabel) || getRank(latestValidDashboardAverage);
+
+            content.innerHTML = rankTiers.map((tier, index) => {
+                const prevLimit = index === 0 ? 0 : rankTiers[index - 1].limit;
+                const rangeText = tier.limit === Infinity
+                    ? `${prevLimit.toFixed(0)}s+`
+                    : `AO${DASHBOARD_AVERAGE_WINDOW} < ${tier.limit.toFixed(0)}s`;
+                const isCurrent = tier.name === currentRank.name;
+
+                return `
+                    <div class="rounded-xl border ${isCurrent ? tier.bgClass + ' ' + tier.shadow : 'border-slate-800 bg-slate-950/50'} p-3 flex items-center justify-between gap-4">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <div class="w-2 h-10 rounded-full border-l-4 ${tier.accentClass}"></div>
+                            <div class="min-w-0">
+                                <p class="font-black ${tier.textClass}">${tier.name}</p>
+                                <p class="text-[10px] text-slate-500 uppercase tracking-wider font-mono">${tier.desc}</p>
+                            </div>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <p class="text-xs font-bold text-slate-300 font-mono">${rangeText}</p>
+                            ${isCurrent ? '<p class="text-[10px] text-sky-300 font-bold uppercase tracking-wider mt-1">Actual</p>' : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            modal.classList.remove('hidden');
+            modal.classList.remove('opacity-0');
+            requestAnimationFrame(() => modal.classList.add('rank-open'));
+        }
+
+        function closeRankModal() {
+            const modal = document.getElementById('rankModal');
+            modal.classList.remove('rank-open');
+            modal.classList.add('opacity-0');
+            setTimeout(() => modal.classList.add('hidden'), 250);
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                closeRankModal();
+                closeSolveDrawer();
+            }
+        });
+
+        // --- GLOW EFFECTS & MOUSE TRACKERS ---
+        const glowPointer = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        const glowBlobStates = Array.from(document.querySelectorAll('.glow-blob')).map((el, index) => ({
+            el,
+            x: 0,
+            y: 0,
+            ease: 0.035 + (index * 0.012),
+            strengthX: 0.045 + (index * 0.025),
+            strengthY: 0.06 + (index * 0.018),
+            scale: 1 + (index * 0.035)
+        }));
+
+        function animateGlowBlobs() {
+            const cx = window.innerWidth / 2;
+            const cy = window.innerHeight / 2;
+            glowBlobStates.forEach(blob => {
+                const targetX = (glowPointer.x - cx) * blob.strengthX;
+                const targetY = (glowPointer.y - cy) * blob.strengthY;
+                blob.x += (targetX - blob.x) * blob.ease;
+                blob.y += (targetY - blob.y) * blob.ease;
+                blob.el.style.setProperty('--blob-x', `${blob.x.toFixed(2)}px`);
+                blob.el.style.setProperty('--blob-y', `${blob.y.toFixed(2)}px`);
+                blob.el.style.setProperty('--blob-scale', blob.scale.toFixed(3));
+            });
+            requestAnimationFrame(animateGlowBlobs);
+        }
+        requestAnimationFrame(animateGlowBlobs);
+
+        const interactiveCubeStates = Array.from(document.querySelectorAll('.cube-viewport')).map((vp, index) => ({
+            vp,
+            cube: vp.querySelector('.rubik-cube-3d'),
+            x: -25,
+            y: 45 + (index * 24),
+            hover: 0,
+            idleSpeed: 0.62 + (index * 0.04)
+        })).filter(state => state.cube);
+
+        function animateInteractiveCubes() {
+            interactiveCubeStates.forEach(state => {
+                if (state.cube.classList.contains('scrambling-fast') || state.cube.classList.contains('solving-flash')) {
+                    return;
+                }
+
+                const rect = state.vp.getBoundingClientRect();
+                const dx = glowPointer.x - (rect.left + rect.width / 2);
+                const dy = glowPointer.y - (rect.top + rect.height / 2);
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const targetHover = Math.max(0, Math.min(1, (320 - dist) / 180));
+                state.hover += (targetHover - state.hover) * 0.08;
+
+                const hoverX = -25 - (dy / 280) * 35;
+                const hoverY = 45 + (dx / 280) * 45;
+                const idleX = -25;
+                const idleY = state.y + state.idleSpeed;
+
+                const targetX = idleX + (hoverX - idleX) * state.hover;
+                const targetY = idleY + (hoverY - idleY) * state.hover;
+
+                state.x += (targetX - state.x) * 0.1;
+                state.y += (targetY - state.y) * 0.1;
+                state.cube.style.animation = 'none';
+                state.cube.style.transform = `rotateX(${state.x.toFixed(2)}deg) rotateY(${state.y.toFixed(2)}deg)`;
+            });
+            requestAnimationFrame(animateInteractiveCubes);
+        }
+        requestAnimationFrame(animateInteractiveCubes);
+
+        document.addEventListener('mousemove', e => {
+            glowPointer.x = e.clientX;
+            glowPointer.y = e.clientY;
+
+            // Card Hover Spotlight
+            const card = e.target.closest('.premium-card');
+            if (card) {
+                const rect = card.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                card.style.setProperty('--mouse-x', `${x}px`);
+                card.style.setProperty('--mouse-y', `${y}px`);
+            }
+        });
+
+        // --- SLIDING NAVIGATION PILL ---
+        function updateTabPill(btn) {
+            const pill = document.getElementById('tab-sliding-pill');
+            if (!pill || !btn) return;
+            const container = document.getElementById('tab-nav-container');
+            const containerRect = container.getBoundingClientRect();
+            const btnRect = btn.getBoundingClientRect();
+            
+            pill.style.width = `${btnRect.width}px`;
+            pill.style.height = `${btnRect.height}px`;
+            pill.style.left = `${btnRect.left - containerRect.left + container.scrollLeft}px`;
+            pill.style.top = `${btnRect.top - containerRect.top}px`;
+        }
+
+        window.addEventListener('resize', () => {
+            const activeBtn = document.querySelector('.tab-btn.active');
+            if (activeBtn) updateTabPill(activeBtn);
+        });
+
+        const navContainer = document.getElementById('tab-nav-container');
+        if (navContainer) {
+            navContainer.addEventListener('scroll', () => {
+                const activeBtn = document.querySelector('.tab-btn.active');
+                if (activeBtn) updateTabPill(activeBtn);
+            });
+        }
+
+        function syncTabViewportHeight() {
+            const dashboard = document.getElementById('dashboard');
+            if (!dashboard || dashboard.classList.contains('hidden')) return;
+            const top = dashboard.getBoundingClientRect().top;
+            const bottomGutter = window.innerWidth >= 768 ? 14 : 10;
+            const height = Math.max(360, window.innerHeight - top - bottomGutter);
+            document.documentElement.style.setProperty('--tab-viewport-height', `${height}px`);
+        }
+
+        window.addEventListener('resize', () => {
+            syncTabViewportHeight();
+            if (document.getElementById('tab-explorador')?.classList.contains('active') && syncExplorerPageSize(true)) {
+                renderExplorerTable();
+            }
+        });
+
+        function switchTab(tabId, btnEl) {
+            const previousPane = document.querySelector('.tab-pane.active');
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            let targetBtn = btnEl;
+            if (!targetBtn) {
+                targetBtn = document.querySelector(`button[onclick*="switchTab('${tabId}'"]`);
+            }
+            if (targetBtn) {
+                targetBtn.classList.add('active');
+                updateTabPill(targetBtn);
+            }
+
+            const targetPane = document.getElementById(`tab-${tabId}`);
+            if (previousPane && previousPane !== targetPane) {
+                previousPane.classList.remove('active');
+                previousPane.classList.add('tab-exit');
+                setTimeout(() => previousPane.classList.remove('tab-exit'), 240);
+            }
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                if (pane !== previousPane && pane !== targetPane) pane.classList.remove('active', 'tab-exit');
+            });
+            if (targetPane && previousPane !== targetPane) {
+                targetPane.classList.remove('tab-exit');
+                targetPane.classList.add('active');
+            }
+            document.body.classList.add('lock-tab-scroll');
+            requestAnimationFrame(() => {
+                syncTabViewportHeight();
+                if (tabId === 'explorador' && parsedSolves.length) {
+                    if (syncExplorerPageSize(true)) renderExplorerTable();
+                }
+            });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // --- CUSTOM TOAST SYSTEM ---
+        function showToast(title, message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let color = 'border-sky-500';
+            let icon = 'fa-info-circle text-sky-400';
+            if (type === 'success') { color = 'border-emerald-500'; icon = 'fa-check-circle text-emerald-400'; }
+            if (type === 'warning') { color = 'border-amber-500'; icon = 'fa-exclamation-triangle text-amber-400'; }
+            if (type === 'error') { color = 'border-rose-500'; icon = 'fa-times-circle text-rose-400'; }
+
+            toast.className = `toast-card premium-card p-4 rounded-xl flex items-start gap-3 ${color} border-l-4`;
+            toast.innerHTML = `
+                <i class="fas ${icon} text-lg mt-0.5"></i>
+                <div class="flex-1">
+                    <h4 class="text-xs font-bold text-white">${title}</h4>
+                    <p class="text-[10px] text-slate-400 mt-1">${message}</p>
+                </div>
+            `;
+            container.appendChild(toast);
+            
+            setTimeout(() => toast.classList.add('show'), 50);
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 400);
+            }, 3000);
+        }
+
+        function showDashboardView() {
+            document.body.classList.remove('welcome-active');
+            document.body.classList.add('dashboard-active');
+            document.getElementById('welcome-view').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            document.body.classList.add('lock-tab-scroll');
+            requestAnimationFrame(() => {
+                syncTabViewportHeight();
+                const activeBtn = document.querySelector('.tab-btn.active');
+                if (activeBtn) updateTabPill(activeBtn);
+            });
+        }
+
+        function fallbackCopyToClipboard(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const ok = document.execCommand('copy');
+            textarea.remove();
+            return ok;
+        }
+
+        function copyToClipboard(text) {
+            const value = String(text || '');
+            const success = () => showToast('Scramble Copiado', 'El scramble se ha guardado en el portapapeles', 'success');
+            const failure = () => showToast('Error', 'No se pudo copiar el scramble', 'error');
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(value).then(success).catch(() => {
+                    fallbackCopyToClipboard(value) ? success() : failure();
+                });
+                return;
+            }
+
+            fallbackCopyToClipboard(value) ? success() : failure();
+        }
+
+        document.getElementById('pb-single-copy-btn').addEventListener('click', () => {
+            if (pbRecords.single) copyToClipboard(pbRecords.single.scramble);
+        });
+
+        // --- DRAG & DROP BINDINGS ---
+        const dropzone = document.getElementById('dropzone');
+        window.addEventListener('dragover', (e) => e.preventDefault());
+        window.addEventListener('drop', (e) => e.preventDefault());
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.name.endsWith('.csv')) {
+                parseCSV(file);
+            } else {
+                showToast('Archivo Inválido', 'Por favor, arrastra un archivo CSV válido.', 'error');
+            }
+        });
+
+        dropzone.addEventListener('click', () => {
+            document.getElementById('csvUpload').click();
+        });
+
+        // --- CSV PARSING & SEQUENCER ---
+        document.getElementById('csvUpload').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (file) parseCSV(file);
+        });
+
+        function parseCSVInput(input) {
+            return new Promise((resolve, reject) => {
+                Papa.parse(input, {
+                    header: false,
+                    skipEmptyLines: true,
+                    complete: results => resolve(results.data),
+                    error: reject
+                });
+            });
+        }
+
+        function parseCSV(file) {
+            const btnText = document.getElementById('btnText');
+            if (btnText) btnText.textContent = file.name;
+            triggerLoadingSequence(async () => {
+                try {
+                    const data = await parseCSVInput(file);
+                    processData(data);
+                } catch (error) {
+                    showToast('Error', 'No se pudo parsear el archivo CSV.', 'error');
+                    throw error;
+                }
+            });
+        }
+
+        async function triggerLoadingSequence(onComplete) {
+            const overlay = document.getElementById('loading-overlay');
+            const cube = document.getElementById('loading-cube');
+            const progressBar = document.getElementById('loading-progress-bar');
+            const statusTitle = document.getElementById('loading-status-title');
+            const statusText = document.getElementById('loading-status-text');
+            
+            overlay.classList.remove('pointer-events-none', 'opacity-0');
+            overlay.classList.add('opacity-100');
+            
+            cube.classList.add('scrambling-fast');
+            statusTitle.textContent = "Scrambleando Cubo...";
+            statusText.textContent = "Mezclando el cubo virtual para procesar CSV...";
+            
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress = Math.min(progress + 3, 92);
+                progressBar.style.width = `${progress}%`;
+                
+                if (progress >= 32 && progress < 36) {
+                    statusTitle.textContent = "Analizando CSV...";
+                    statusText.textContent = "Procesando registros de resoluciones y promedios...";
+                } else if (progress >= 68 && progress < 72) {
+                    statusTitle.textContent = "Optimizando Gráficos...";
+                    statusText.textContent = "Inyectando sombras de brillo neon a las curvas...";
+                }
+            }, 40);
+
+            await new Promise(resolve => setTimeout(resolve, 350));
+
+            try {
+                if (onComplete) await onComplete();
+                clearInterval(interval);
+                progressBar.style.width = "100%";
+                cube.classList.remove('scrambling-fast');
+                cube.classList.add('solving-flash');
+                statusTitle.textContent = "¡Cubo Resuelto!";
+                statusTitle.className = "text-xl font-black text-emerald-400 drop-shadow-[0_0_12px_rgba(16,185,129,0.8)]";
+                statusText.textContent = "Análisis completado con éxito";
+
+                setTimeout(() => {
+                    overlay.classList.remove('opacity-100');
+                    overlay.classList.add('opacity-0', 'pointer-events-none');
+
+                    setTimeout(() => {
+                        cube.classList.remove('solving-flash');
+                        statusTitle.className = "text-xl font-black text-white bg-gradient-to-r from-sky-400 to-indigo-300 bg-clip-text text-transparent";
+                        progressBar.style.width = "0%";
+                    }, 500);
+                }, 650);
+            } catch (error) {
+                clearInterval(interval);
+                cube.classList.remove('scrambling-fast');
+                statusTitle.textContent = "Error de carga";
+                statusTitle.className = "text-xl font-black text-rose-400";
+                statusText.textContent = "Revisa el archivo CSV e inténtalo de nuevo.";
+                setTimeout(() => {
+                    overlay.classList.remove('opacity-100');
+                    overlay.classList.add('opacity-0', 'pointer-events-none');
+                    statusTitle.className = "text-xl font-black text-white bg-gradient-to-r from-sky-400 to-indigo-300 bg-clip-text text-transparent";
+                    progressBar.style.width = "0%";
+                }, 1200);
+            }
+        }
+
+        // --- AUTO PRE-LOADER / DEMO SYSTEM ---
+        window.addEventListener('DOMContentLoaded', () => {
+            fetch('cubedesk_export.csv')
+                .then(response => {
+                    if (response.ok) return response.text();
+                    throw new Error('Not found');
+                })
+                .then(csvText => {
+                    triggerLoadingSequence(async () => {
+                        const data = await parseCSVInput(csvText);
+                        processData(data);
+                        showToast('Datos Encontrados', 'Se han pre-cargado tus datos reales en local', 'success');
+                    });
+                })
+                .catch(() => {});
+        });
+
+        function loadDemoDataset() {
+            triggerLoadingSequence(() => {
+                let generated = generateDemoData();
+                parsedSolves = generated;
+                heatmapPageIndex = 0;
+                showDashboardView();
+                calculateStats();
+                showToast('Simulación Cargada', 'Dashboard poblado con éxito.', 'success');
+            });
+        }
+
+        function generateDemoData() {
+            let mockSolves = [];
+            let baseTime = 13.5;
+            let now = new Date();
+            
+            for (let i = 0; i < 620; i++) {
+                let dateObj = new Date(now.getTime() - (620 - i) * 3.5 * 60 * 60 * 1000);
+                let rand = Math.random();
+                let sTime = baseTime;
+                
+                let progressFactor = (i / 620) * 2.2;
+                sTime -= progressFactor;
+
+                if (rand < 0.04) {
+                    mockSolves.push({
+                        globalIndex: i + 1, originalTime: 'DNF', time: Infinity,
+                        isDNF: true, isPlus2: false, dateStr: formatDateString(dateObj), dateObj: dateObj,
+                        scramble: generateRandomScramble()
+                    });
+                    continue;
+                }
+
+                let noise = (Math.random() - 0.5) * 3.0;
+                if (Math.random() < 0.08) noise = Math.random() * 7.0 - 2.0;
+                if (Math.random() < 0.06) noise = -Math.random() * 3.2 - 1.2;
+                sTime += noise;
+                if (sTime < 7.4) sTime = 7.4 + Math.random() * 0.9;
+
+                let isPlus2 = Math.random() < 0.07;
+                let origTime = sTime.toFixed(2);
+                if (isPlus2) {
+                    sTime += 2.0;
+                    origTime = sTime.toFixed(2) + '+';
+                }
+
+                mockSolves.push({
+                    globalIndex: i + 1, originalTime: origTime, time: sTime,
+                    isDNF: false, isPlus2: isPlus2, dateStr: formatDateString(dateObj), dateObj: dateObj,
+                    scramble: generateRandomScramble()
+                });
+            }
+            return mockSolves;
+        }
+
+        function formatDateString(d) {
+            return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}, ${formatAMPM(d)}`;
+        }
+
+        function formatAMPM(date) {
+            let hours = date.getHours();
+            let minutes = date.getMinutes();
+            let seconds = date.getSeconds();
+            let ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12;
+            hours = hours ? hours : 12;
+            minutes = minutes < 10 ? '0' + minutes : minutes;
+            seconds = seconds < 10 ? '0' + seconds : seconds;
+            return `${hours}:${minutes}:${seconds} ${ampm}`;
+        }
+
+        function generateRandomScramble() {
+            const moves = ["R", "L", "U", "D", "F", "B"];
+            const mods = ["", "'", "2"];
+            let scr = [];
+            let last = "";
+            for (let i = 0; i < 20; i++) {
+                let m = moves[Math.floor(Math.random() * moves.length)];
+                while (m === last) {
+                    m = moves[Math.floor(Math.random() * moves.length)];
+                }
+                let md = mods[Math.floor(Math.random() * mods.length)];
+                scr.push(m + md);
+                last = m;
+            }
+            return scr.join(" ");
+        }
+
+        // --- MATH HELPERS ---
+        function calcAO(validTimesArray, windowSize) {
+            if (validTimesArray.length < windowSize) return null;
+            let window = validTimesArray.slice(-windowSize);
+            window.sort((a, b) => a - b);
+            let trimCount = Math.ceil(windowSize * 0.05);
+            if (windowSize === 5 || windowSize === 12) trimCount = 1;
+            let trimmed = window.slice(trimCount, windowSize - trimCount);
+            if (trimmed.length === 0) return null;
+            return trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
+        }
+
+        function getISOWeekString(date) {
+            let d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+            let dayNum = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            let yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            let weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            return d.getUTCFullYear() + "-W" + String(weekNo).padStart(2, '0');
+        }
+
+        function calcSD(times) {
+            if (times.length === 0) return 0;
+            const mean = times.reduce((a, b) => a + b, 0) / times.length;
+            return Math.sqrt(times.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / times.length);
+        }
+
+        // --- STAT COMPUTATIONS ---
+        function processData(data) {
+            parsedSolves = [];
+            pbRecords = { single: null, ao5: null, ao12: null, ao100: null };
+            heatmapPageIndex = 0;
+
+            let rawRows = data.slice(1).reverse();
+            rawRows.forEach((row, i) => {
+                if (row.length < 4) return;
+                let rawTime = row[1] ? row[1].toString().trim() : '';
+                if (!rawTime) return;
+
+                let isDNF = rawTime.toUpperCase() === 'DNF';
+                let isPlus2 = rawTime.includes('+');
+                let timeVal = parseFloat(rawTime.replace(/[^0-9.]/g, ''));
+                if (isNaN(timeVal) && !isDNF) return;
+
+                let dateStr = row[3] || '';
+                if (row[4]) dateStr += ',' + row[4];
+                let dateObj = new Date(dateStr.trim());
+
+                parsedSolves.push({
+                    globalIndex: i + 1, originalTime: rawTime, time: timeVal,
+                    isDNF: isDNF, isPlus2: isPlus2, dateStr: dateStr.trim(), dateObj: dateObj, scramble: row[2] || 'N/A'
+                });
+            });
+
+            if (parsedSolves.length === 0) {
+                showToast('Error de datos', 'No se encontraron tiempos válidos en el CSV.', 'error');
+                throw new Error('No valid solve rows found');
+            }
+
+            showDashboardView();
+            calculateStats();
+
+            showToast('Análisis Completado', `Se importaron ${parsedSolves.length} resoluciones.`, 'success');
+        }
+
+        function calculateStats() {
+            globalData = {
+                indices: [], singles: [], ao50: [], ao100: [], ao500: [],
+                pbSingle: [], pbAo5: [], pbAo12: [],
+                rate10: [], rate12: [], rate15: [],
+                monthlyData: {}, weeklyData: {}, dailyActivity: {},
+                pies: { subX: [0, 0, 0, 0, 0, 0], secondsBucket: {} }
+            };
+
+            let allValidTimes = [];
+            let hourlyData = {};
+            let weekdayData = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+            latestValidDashboardAverage = null;
+
+            let currPbSingle = Infinity, currPbAo5 = Infinity, currPbAo12 = Infinity, currPbAo100 = Infinity;
+            let recent100 = [];
+
+            for (let i = 0; i < parsedSolves.length; i++) {
+                let s = parsedSolves[i];
+                recent100.push(s.isDNF ? Infinity : s.time);
+                if (recent100.length > 100) recent100.shift();
+
+                let r10 = null, r12 = null, r15 = null;
+                if (recent100.length >= 20) {
+                    r10 = (recent100.filter(t => t < 10).length / recent100.length) * 100;
+                    r12 = (recent100.filter(t => t < 12).length / recent100.length) * 100;
+                    r15 = (recent100.filter(t => t < 15).length / recent100.length) * 100;
+                }
+                globalData.rate10.push(r10);
+                globalData.rate12.push(r12);
+                globalData.rate15.push(r15);
+
+                if (!s.isDNF) {
+                    allValidTimes.push(s.time);
+                    if (s.time < currPbSingle) {
+                        currPbSingle = s.time;
+                        pbRecords.single = { time: s.time, date: s.dateStr, scramble: s.scramble };
+                    }
+                }
+
+                let ao5 = calcAO(allValidTimes, 5);
+                let ao12 = calcAO(allValidTimes, 12);
+                let ao50 = calcAO(allValidTimes, 50);
+                let dashboardAverage = calcAO(allValidTimes, DASHBOARD_AVERAGE_WINDOW);
+                let ao500 = calcAO(allValidTimes, 500);
+
+                if (ao5 !== null && ao5 < currPbAo5) {
+                    currPbAo5 = ao5;
+                    let window5 = allValidTimes.slice(-5);
+                    pbRecords.ao5 = { avg: ao5, list: window5.map(v => v.toFixed(2)).join(', '), date: s.dateStr };
+                }
+                
+                if (ao12 !== null && ao12 < currPbAo12) {
+                    currPbAo12 = ao12;
+                    let window12 = allValidTimes.slice(-12);
+                    pbRecords.ao12 = { avg: ao12, list: window12.map(v => v.toFixed(2)).join(', '), date: s.dateStr };
+                }
+
+                if (dashboardAverage !== null) {
+                    latestValidDashboardAverage = dashboardAverage;
+                    if (dashboardAverage < currPbAo100) {
+                        currPbAo100 = dashboardAverage;
+                        pbRecords.ao100 = { avg: dashboardAverage, date: s.dateStr };
+                    }
+                }
+
+                globalData.indices.push(s.globalIndex);
+                globalData.singles.push(s.isDNF ? null : s.time);
+                globalData.ao50.push(ao50);
+                globalData.ao100.push(ao100);
+                globalData.ao500.push(ao500);
+
+                globalData.pbSingle.push(currPbSingle === Infinity ? null : currPbSingle);
+                globalData.pbAo5.push(currPbAo5 === Infinity ? null : currPbAo5);
+                globalData.pbAo12.push(currPbAo12 === Infinity ? null : currPbAo12);
+
+                if (!isNaN(s.dateObj.getTime())) {
+                    let monthKey = `${s.dateObj.getFullYear()}-${String(s.dateObj.getMonth() + 1).padStart(2, '0')}`;
+                    if (!globalData.monthlyData[monthKey]) globalData.monthlyData[monthKey] = [];
+                    if (!s.isDNF) globalData.monthlyData[monthKey].push(s.time);
+
+                    let weekKey = getISOWeekString(s.dateObj);
+                    if (!globalData.weeklyData[weekKey]) globalData.weeklyData[weekKey] = [];
+                    if (!s.isDNF) globalData.weeklyData[weekKey].push(s.time);
+
+                    let dayKey = `${s.dateObj.getFullYear()}-${String(s.dateObj.getMonth() + 1).padStart(2, '0')}-${String(s.dateObj.getDate()).padStart(2, '0')}`;
+                    globalData.dailyActivity[dayKey] = (globalData.dailyActivity[dayKey] || 0) + 1;
+
+                    let hour = s.dateObj.getHours();
+                    let minute = s.dateObj.getMinutes();
+                    let bucketIndex = (hour * 4) + Math.floor(minute / 15);
+                    if (!hourlyData[bucketIndex]) hourlyData[bucketIndex] = [];
+                    if (!s.isDNF) hourlyData[bucketIndex].push(s.time);
+
+                    weekdayData[s.dateObj.getDay()]++;
+                }
+            }
+
+            // Bind values to DOM
+            document.getElementById('st-total').innerText = parsedSolves.length;
+            document.getElementById('st-single').innerText = currPbSingle === Infinity ? '-' : currPbSingle.toFixed(2) + 's';
+            document.getElementById('st-ao5').innerText = currPbAo5 === Infinity ? '-' : currPbAo5.toFixed(2) + 's';
+            document.getElementById('st-curr-ao100').innerText = latestValidDashboardAverage === null ? '-' : latestValidDashboardAverage.toFixed(2) + 's';
+            document.getElementById('st-sd').innerText = calcSD(allValidTimes).toFixed(2) + 's';
+
+            // Top Header Indicators
+            const headerTotal = document.getElementById('header-total');
+            const headerAo100 = document.getElementById('header-ao100');
+            if (headerTotal) headerTotal.innerText = parsedSolves.length;
+            if (headerAo100) headerAo100.innerText = latestValidDashboardAverage === null ? '-' : latestValidDashboardAverage.toFixed(2) + 's';
+
+            // Show PBs in Dedicated Cards
+            if (pbRecords.single) {
+                document.getElementById('pb-single-val').innerText = pbRecords.single.time.toFixed(2) + 's';
+                document.getElementById('pb-single-date').innerText = pbRecords.single.date.split(',')[0];
+                document.getElementById('pb-single-scramble').innerText = pbRecords.single.scramble;
+                document.getElementById('pb-single-scramble').title = pbRecords.single.scramble;
+            }
+            
+            if (pbRecords.ao5) {
+                document.getElementById('pb-ao5-val').innerText = pbRecords.ao5.avg.toFixed(2) + 's';
+                document.getElementById('pb-ao5-date').innerText = pbRecords.ao5.date.split(',')[0];
+                document.getElementById('pb-ao5-list').innerText = pbRecords.ao5.list;
+            }
+
+            if (pbRecords.ao12) {
+                document.getElementById('pb-ao12-val').innerText = pbRecords.ao12.avg.toFixed(2) + 's';
+                document.getElementById('pb-ao12-date').innerText = pbRecords.ao12.date.split(',')[0];
+                document.getElementById('pb-ao12-list').innerText = pbRecords.ao12.list;
+            }
+
+            // Streaks
+            let streakObj = calculatePracticeStreaks();
+            document.getElementById('streak-curr-val').innerText = streakObj.current;
+            document.getElementById('streak-max-val').innerText = streakObj.longest + ' días';
+
+            // Rank Name Update
+            let userRank = getRank(latestValidDashboardAverage);
+            const rankPanel = document.getElementById('rank-panel');
+            const rankName = document.getElementById('st-rank-name');
+            rankPanel.className = `summary-stat-card premium-card p-4 flex flex-col justify-center items-center text-center cursor-pointer border-l-4 ${userRank.accentClass} border ${userRank.bgClass} ${userRank.shadow}`;
+            rankName.className = `text-xl font-extrabold ${userRank.textClass}`;
+            rankName.innerText = userRank.name;
+
+            // Render charts
+            renderMainTrendChart();
+            renderPbChart();
+            renderTimeframeChart();
+            renderDeltaChart();
+            renderConsistencyChart();
+            renderHeatmap();
+            drawHourlyChart(hourlyData);
+            drawWeekdayChart(weekdayData);
+            
+            initializeDistributionDateRange();
+            applyDistributionFilter();
+            
+            filteredSolves = parsedSolves.slice();
+            explorerCurrentPage = 1;
+            applyExplorerFilters();
+        }
+
+        function calculatePracticeStreaks() {
+            let dates = parsedSolves
+                .map(s => {
+                    if (isNaN(s.dateObj.getTime())) return null;
+                    let year = s.dateObj.getFullYear();
+                    let month = String(s.dateObj.getMonth() + 1).padStart(2, '0');
+                    let day = String(s.dateObj.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                })
+                .filter(d => d !== null);
+
+            let uniqueDates = Array.from(new Set(dates)).sort();
+            if (uniqueDates.length === 0) return { current: 0, longest: 0 };
+
+            let longest = 1;
+            let current = 0;
+            let temp = 1;
+
+            for (let i = 0; i < uniqueDates.length - 1; i++) {
+                let d1 = new Date(uniqueDates[i]);
+                let d2 = new Date(uniqueDates[i+1]);
+                let diffTime = Math.abs(d2 - d1);
+                let diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays === 1) {
+                    temp++;
+                } else if (diffDays > 1) {
+                    if (temp > longest) longest = temp;
+                    temp = 1;
+                }
+            }
+            if (temp > longest) longest = temp;
+
+            let lastPract = new Date(uniqueDates[uniqueDates.length - 1]);
+            let today = new Date();
+            lastPract.setHours(0,0,0,0);
+            today.setHours(0,0,0,0);
+
+            let diffToday = Math.abs(today - lastPract);
+            let diffDaysToday = Math.ceil(diffToday / (1000 * 60 * 60 * 24));
+
+            if (diffDaysToday <= 1) {
+                current = temp;
+            } else {
+                current = 0;
+            }
+
+            return { current: current, longest: longest };
+        }
+
+        // --- GITHUB HEATMAP ---
+        function addMonths(date, amount) {
+            return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+        }
+
+        function monthDiff(start, end) {
+            return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+        }
+
+        function formatHeatmapMonth(date) {
+            const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+            return `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+        }
+
+        function updateHeatmapPager(pageStart, pageEnd) {
+            const label = document.getElementById('heatmap-page-label');
+            const prev = document.getElementById('heatmap-prev-page');
+            const next = document.getElementById('heatmap-next-page');
+            if (label) label.innerText = `${formatHeatmapMonth(pageStart)} - ${formatHeatmapMonth(pageEnd)}`;
+            if (prev) prev.disabled = heatmapPageIndex <= 0;
+            if (next) next.disabled = heatmapPageIndex >= heatmapPageCount - 1;
+        }
+
+        function changeHeatmapPage(delta) {
+            heatmapPageIndex = Math.max(0, Math.min(heatmapPageCount - 1, heatmapPageIndex + delta));
+            renderHeatmap();
+        }
+
+        function renderHeatmap() {
+            const heatmapContainer = document.getElementById('heatmap-container');
+            heatmapContainer.innerHTML = '';
+
+            let dates = Object.keys(globalData.dailyActivity).sort();
+            if (dates.length === 0) return;
+
+            let firstParts = dates[0].split('-');
+            let lastParts = dates[dates.length - 1].split('-');
+
+            let minDate = new Date(firstParts[0], firstParts[1] - 1, 1);
+            let maxDate = new Date(lastParts[0], lastParts[1] - 1, 1);
+            let maxDayDate = new Date(lastParts[0], lastParts[1] - 1, lastParts[2]);
+
+            let maxSolves = 0;
+            let totalSolves = 0;
+
+            Object.values(globalData.dailyActivity).forEach(v => {
+                if (v > maxSolves) maxSolves = v;
+                totalSolves += v;
+            });
+
+            const totalMonths = Math.max(1, monthDiff(minDate, maxDate) + 1);
+            heatmapPageCount = Math.max(1, Math.ceil(totalMonths / HEATMAP_MONTHS_PER_PAGE));
+            heatmapPageIndex = Math.max(0, Math.min(heatmapPageIndex, heatmapPageCount - 1));
+
+            const pageStart = addMonths(minDate, heatmapPageIndex * HEATMAP_MONTHS_PER_PAGE);
+            const pageEnd = addMonths(pageStart, HEATMAP_MONTHS_PER_PAGE - 1);
+            updateHeatmapPager(pageStart, pageEnd);
+
+            let html = '';
+
+            for (let monthOffset = 0; monthOffset < HEATMAP_MONTHS_PER_PAGE; monthOffset++) {
+                const currMonthDate = addMonths(pageStart, monthOffset);
+                let y = currMonthDate.getFullYear();
+                let m = currMonthDate.getMonth();
+                const isFutureMonth = currMonthDate > maxDate;
+                const monthTitle = formatHeatmapMonth(currMonthDate);
+
+                let monthHtml = `<div class="heatmap-month ${isFutureMonth ? 'heatmap-month-future' : ''} flex flex-col">`;
+                monthHtml += `<div class="text-base font-black ${isFutureMonth ? 'text-slate-500' : 'text-slate-200'} mb-2 pl-1 font-mono tracking-tight">${monthTitle}</div>`;
+                monthHtml += `<div class="heatmap-month-shell flex items-start gap-2 p-2.5 rounded-xl">`;
+                monthHtml += `
+                    <div class="heatmap-weekday-labels grid text-[10px] text-slate-500 font-mono font-bold">
+                        <div class="heatmap-day-cell flex items-center justify-center">L</div>
+                        <div class="heatmap-day-cell flex items-center justify-center">M</div>
+                        <div class="heatmap-day-cell flex items-center justify-center">X</div>
+                        <div class="heatmap-day-cell flex items-center justify-center">J</div>
+                        <div class="heatmap-day-cell flex items-center justify-center">V</div>
+                        <div class="heatmap-day-cell flex items-center justify-center">S</div>
+                        <div class="heatmap-day-cell flex items-center justify-center">D</div>
+                    </div>
+                `;
+                monthHtml += `<div class="heatmap-month-grid grid grid-rows-7 grid-flow-col">`;
+
+                let daysInMonth = new Date(y, m + 1, 0).getDate();
+                let firstDayIndex = new Date(y, m, 1).getDay();
+                let offset = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
+
+                for (let i = 0; i < offset; i++) {
+                    monthHtml += `<div class="heatmap-day-cell opacity-0"></div>`;
+                }
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    let dStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                    let count = globalData.dailyActivity[dStr] || 0;
+                    let cellDate = new Date(y, m, d);
+                    let isFutureDay = cellDate > maxDayDate;
+
+                    let colorClass = 'bg-slate-900 border border-slate-800/40';
+                    if (isFutureMonth || isFutureDay) {
+                        colorClass = 'bg-slate-900/25 border border-slate-800/30';
+                    } else if (count > 0) {
+                        if (count <= 10) colorClass = 'bg-emerald-950/50 border border-emerald-900/60';
+                        else if (count <= 25) colorClass = 'bg-emerald-800/80';
+                        else if (count <= 55) colorClass = 'bg-emerald-500';
+                        else colorClass = 'bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.5)] border border-emerald-100';
+                    }
+
+                    let tooltip = isFutureMonth || isFutureDay ? `${dStr}: sin datos todavia` : `${dStr}: ${count} resoluciones`;
+                    monthHtml += `<div class="heatmap-day-cell rounded ${colorClass} cursor-pointer heatmap-square" title="${tooltip}"></div>`;
+                }
+
+                monthHtml += `</div></div></div>`;
+                html += monthHtml;
+            }
+
+            heatmapContainer.innerHTML = html;
+            document.getElementById('st-max-day').innerText = maxSolves;
+            document.getElementById('st-heatmap-total').innerText = totalSolves;
+        }
+
+        // --- CHART THEMING & GLASS TOOLTIPS ---
+        Chart.defaults.color = '#64748b';
+        Chart.defaults.font.family = 'Outfit';
+        Chart.defaults.font.size = 11;
+
+        const neonGlowPlugin = {
+            id: 'neonGlow',
+            beforeDatasetDraw(chart, args, options) {
+                const ctx = chart.ctx;
+                const dataset = chart.data.datasets[args.index];
+                if (dataset && dataset.disableGlow) return;
+                ctx.save();
+                if (chart.config.options.plugins && chart.config.options.plugins.neonGlow) {
+                    const glowOpt = chart.config.options.plugins.neonGlow;
+                    ctx.shadowColor = glowOpt.shadowColor || 'rgba(56, 189, 248, 0.3)';
+                    ctx.shadowBlur = glowOpt.shadowBlur || 8;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = glowOpt.shadowOffsetY || 3;
+                }
+            },
+            afterDatasetDraw(chart, args, options) {
+                const dataset = chart.data.datasets[args.index];
+                if (dataset && dataset.disableGlow) return;
+                chart.ctx.restore();
+            }
+        };
+        Chart.register(neonGlowPlugin);
+
+        const CHART_POINT_LIMITS = {
+            trendLine: 1400,
+            trendSingles: 900,
+            consistency: 1400,
+            pb: 1800
+        };
+
+        function compactAveragePoints(indices, values, maxPoints) {
+            if (!indices || indices.length === 0) return [];
+            const n = indices.length;
+            if (n <= maxPoints) {
+                return values
+                    .map((y, i) => y === null || y === undefined || !isFinite(y) ? null : { x: indices[i], y })
+                    .filter(Boolean);
+            }
+
+            const points = [];
+            const bucketSize = n / maxPoints;
+            for (let b = 0; b < maxPoints; b++) {
+                const start = Math.floor(b * bucketSize);
+                const end = Math.min(n, Math.floor((b + 1) * bucketSize));
+                let sum = 0;
+                let count = 0;
+                let lastValidIndex = -1;
+
+                for (let i = start; i < end; i++) {
+                    const y = values[i];
+                    if (y !== null && y !== undefined && isFinite(y)) {
+                        sum += y;
+                        count++;
+                        lastValidIndex = i;
+                    }
+                }
+
+                if (count > 0) {
+                    const mid = lastValidIndex >= 0 ? lastValidIndex : Math.min(n - 1, Math.floor((start + end) / 2));
+                    points.push({ x: indices[mid], y: sum / count });
+                }
+            }
+
+            return points;
+        }
+
+        function compactScatterExtremes(indices, values, maxBuckets) {
+            if (!indices || indices.length === 0) return [];
+            const n = indices.length;
+            if (n <= maxBuckets) {
+                return values
+                    .map((y, i) => y === null || y === undefined || !isFinite(y) ? null : { x: indices[i], y })
+                    .filter(Boolean);
+            }
+
+            const points = [];
+            const bucketSize = n / maxBuckets;
+            for (let b = 0; b < maxBuckets; b++) {
+                const start = Math.floor(b * bucketSize);
+                const end = Math.min(n, Math.floor((b + 1) * bucketSize));
+                let minPoint = null;
+                let maxPoint = null;
+
+                for (let i = start; i < end; i++) {
+                    const y = values[i];
+                    if (y === null || y === undefined || !isFinite(y)) continue;
+                    if (!minPoint || y < minPoint.y) minPoint = { x: indices[i], y };
+                    if (!maxPoint || y > maxPoint.y) maxPoint = { x: indices[i], y };
+                }
+
+                if (minPoint) points.push(minPoint);
+                if (maxPoint && maxPoint.x !== minPoint.x) points.push(maxPoint);
+            }
+
+            return points;
+        }
+
+        function compactSteppedPoints(indices, values, maxPoints) {
+            const points = [];
+            let lastValue = null;
+            let lastIndex = null;
+
+            for (let i = 0; i < values.length; i++) {
+                const y = values[i];
+                if (y === null || y === undefined || !isFinite(y)) continue;
+
+                if (lastValue === null) {
+                    points.push({ x: indices[i], y });
+                } else if (Math.abs(y - lastValue) > 0.0001) {
+                    points.push({ x: indices[i - 1] || lastIndex, y: lastValue });
+                    points.push({ x: indices[i], y });
+                }
+
+                lastValue = y;
+                lastIndex = indices[i];
+            }
+
+            if (lastValue !== null) {
+                points.push({ x: lastIndex, y: lastValue });
+            }
+
+            return points.length > maxPoints
+                ? compactAveragePoints(points.map(p => p.x), points.map(p => p.y), maxPoints)
+                : points;
+        }
+
+        function largeChartOptions(extra = {}) {
+            return {
+                animation: false,
+                responsiveAnimationDuration: 0,
+                parsing: false,
+                normalized: true,
+                interaction: { mode: 'nearest', intersect: false, axis: 'x' },
+                hover: { mode: 'nearest', intersect: false },
+                ...extra
+            };
+        }
+
+        function solveIndexScale(extra = {}) {
+            const firstIndex = globalData.indices.length ? globalData.indices[0] : 1;
+            const lastIndex = globalData.indices.length ? globalData.indices[globalData.indices.length - 1] : firstIndex;
+            return {
+                type: 'linear',
+                min: firstIndex,
+                max: lastIndex,
+                bounds: 'data',
+                offset: false,
+                grace: 0,
+                grid: { color: 'rgba(255, 255, 255, 0.02)' },
+                ticks: {
+                    maxTicksLimit: 8,
+                    callback: v => Math.round(v)
+                },
+                ...extra
+            };
+        }
+
+        const getOrCreateTooltip = (chart) => {
+            chart.canvas.parentNode.style.position = 'relative';
+            let tooltipEl = chart.canvas.parentNode.querySelector('div.glass-tooltip');
+            if (!tooltipEl) {
+                tooltipEl = document.createElement('div');
+                tooltipEl.className = 'glass-tooltip absolute bg-[#0c1020]/90 backdrop-blur-md border border-slate-700/50 text-slate-200 px-3.5 py-2.5 rounded-xl pointer-events-none text-xs font-mono shadow-[0_10px_25px_rgba(0,0,0,0.5)] transition-all duration-150 z-50';
+                tooltipEl.style.opacity = 0;
+                chart.canvas.parentNode.appendChild(tooltipEl);
+            }
+            return tooltipEl;
+        };
+
+        const externalTooltipHandler = (context) => {
+            const {chart, tooltip} = context;
+            const tooltipEl = getOrCreateTooltip(chart);
+
+            if (tooltip.opacity === 0) {
+                tooltipEl.style.opacity = 0;
+                return;
+            }
+
+            if (tooltip.body) {
+                const titleLines = tooltip.title || [];
+                const bodyLines = tooltip.body.map(b => b.lines);
+
+                let innerHtml = '';
+                titleLines.forEach(title => {
+                    innerHtml += `<div class="font-bold text-white border-b border-slate-800 pb-1 mb-1.5 text-[11px]">${title}</div>`;
+                });
+
+                bodyLines.forEach((body, i) => {
+                    const colors = tooltip.labelColors[i];
+                    const style = `background:${colors.backgroundColor}; border-color:${colors.borderColor}; border-width: 2px`;
+                    const span = `<span class="inline-block w-2.5 h-2.5 mr-2 rounded-full align-middle" style="${style}"></span>`;
+                    innerHtml += `<div class="flex items-center text-[11px] font-mono py-0.5 text-sky-400 font-semibold">${span}${body}</div>`;
+                });
+
+                tooltipEl.innerHTML = innerHtml;
+            }
+
+            const {offsetLeft: positionX, offsetTop: positionY} = chart.canvas;
+            tooltipEl.style.opacity = 1;
+            tooltipEl.style.left = positionX + tooltip.caretX + 'px';
+            tooltipEl.style.top = positionY + tooltip.caretY - 10 + 'px';
+            tooltipEl.style.transform = 'translate(-50%, -100%)';
+        };
+
+        function setTrendType(type) {
+            currentTrend = type;
+            document.querySelectorAll('#btn-ao50, #btn-ao100, #btn-ao500').forEach(b => b.classList.remove('active'));
+            document.getElementById(`btn-${type}`).classList.add('active');
+            renderMainTrendChart();
+        }
+
+        function toggleSingles(forceValue) {
+            showSingles = typeof forceValue === 'boolean' ? forceValue : !showSingles;
+            const label = document.getElementById('btn-toggle-singles');
+            const input = document.getElementById('toggle-singles-input');
+            if (input) input.checked = showSingles;
+            if (showSingles) {
+                label.innerHTML = '<i class="fas fa-eye mr-1 text-sky-400"></i> Singles';
+            } else {
+                label.innerHTML = '<i class="fas fa-eye-slash mr-1 text-slate-500"></i> Limpia';
+            }
+            renderMainTrendChart();
+        }
+
+        function setTimeframe(type) {
+            currentTimeframe = type;
+            document.getElementById('btn-monthly').classList.remove('active');
+            document.getElementById('btn-weekly').classList.remove('active');
+            document.getElementById(`btn-${type}`).classList.add('active');
+            renderTimeframeChart();
+        }
+
+        function renderMainTrendChart() {
+            if (charts['trend']) charts['trend'].destroy();
+            const ctx = document.getElementById('mainTrendChart').getContext('2d');
+
+            let trendData = currentTrend === 'ao50' ? globalData.ao50 : (currentTrend === 'ao100' ? globalData.ao100 : globalData.ao500);
+            let trendLabel = currentTrend.toUpperCase();
+            let trendColor = currentTrend === 'ao500' ? '#f59e0b' : (currentTrend === 'ao100' ? '#c084fc' : '#38bdf8');
+            let trendPoints = compactAveragePoints(globalData.indices, trendData, CHART_POINT_LIMITS.trendLine);
+
+            let fillGrad = ctx.createLinearGradient(0, 0, 0, 360);
+            fillGrad.addColorStop(0, hexToRgbA(trendColor, 0.15));
+            fillGrad.addColorStop(1, hexToRgbA(trendColor, 0));
+
+            let datasets = [{
+                label: trendLabel,
+                data: trendPoints,
+                borderColor: trendColor,
+                borderWidth: 2.5,
+                pointRadius: 0,
+                tension: 0.15,
+                fill: true,
+                backgroundColor: fillGrad
+            }];
+
+            if (showSingles) {
+                datasets.push({
+                    label: 'Single',
+                    data: compactScatterExtremes(globalData.indices, globalData.singles, CHART_POINT_LIMITS.trendSingles),
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    borderWidth: 0,
+                    pointRadius: 1.5,
+                    pointHoverRadius: 3,
+                    type: 'scatter',
+                    disableGlow: true
+                });
+            }
+
+            charts['trend'] = new Chart(ctx, {
+                type: 'line',
+                data: { datasets: datasets },
+                options: largeChartOptions({
+                    spanGaps: true,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            enabled: false,
+                            external: externalTooltipHandler,
+                            callbacks: {
+                                title: items => items.length ? `Solve #${Math.round(items[0].raw.x)}` : '',
+                                label: item => `${item.dataset.label}: ${Number(item.raw.y).toFixed(2)}s`
+                            }
+                        },
+                        neonGlow: { shadowColor: trendColor, shadowBlur: 10 }
+                    },
+                    scales: {
+                        x: solveIndexScale(),
+                        y: { grid: { color: 'rgba(255, 255, 255, 0.02)' }, title: { display: true, text: 'Segundos' } }
+                    }
+                })
+            });
+        }
+
+        function renderPbChart() {
+            if (charts['pb']) charts['pb'].destroy();
+            const ctx = document.getElementById('pbChart').getContext('2d');
+            charts['pb'] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        { label: 'PB Single', data: compactSteppedPoints(globalData.indices, globalData.pbSingle, CHART_POINT_LIMITS.pb), borderColor: '#10b981', borderWidth: 2, pointRadius: 0, stepped: true },
+                        { label: 'PB AO5', data: compactSteppedPoints(globalData.indices, globalData.pbAo5, CHART_POINT_LIMITS.pb), borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, stepped: true },
+                        { label: 'PB AO12', data: compactSteppedPoints(globalData.indices, globalData.pbAo12, CHART_POINT_LIMITS.pb), borderColor: '#a855f7', borderWidth: 2, pointRadius: 0, stepped: true }
+                    ]
+                },
+                options: largeChartOptions({
+                    spanGaps: true,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            enabled: false,
+                            external: externalTooltipHandler,
+                            callbacks: {
+                                title: items => items.length ? `Solve #${Math.round(items[0].raw.x)}` : '',
+                                label: item => `${item.dataset.label}: ${Number(item.raw.y).toFixed(2)}s`
+                            }
+                        },
+                        neonGlow: { shadowColor: '#38bdf8', shadowBlur: 8 }
+                    },
+                    scales: {
+                        x: solveIndexScale(),
+                        y: { grid: { color: 'rgba(255,255,255,0.02)' }, title: { display: true, text: 'Segundos' } }
+                    }
+                })
+            });
+        }
+
+        function renderConsistencyChart() {
+            if (charts['consistency']) charts['consistency'].destroy();
+            const ctx = document.getElementById('consistencyChart').getContext('2d');
+            charts['consistency'] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        { label: '% Sub-10', data: compactAveragePoints(globalData.indices, globalData.rate10, CHART_POINT_LIMITS.consistency), borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.08)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.25 },
+                        { label: '% Sub-12', data: compactAveragePoints(globalData.indices, globalData.rate12, CHART_POINT_LIMITS.consistency), borderColor: '#8b5cf6', backgroundColor: 'transparent', borderWidth: 2, borderDash: [4, 4], pointRadius: 0, tension: 0.25 },
+                        { label: '% Sub-15', data: compactAveragePoints(globalData.indices, globalData.rate15, CHART_POINT_LIMITS.consistency), borderColor: '#10b981', backgroundColor: 'transparent', borderWidth: 2, borderDash: [2, 2], pointRadius: 0, tension: 0.25 }
+                    ]
+                },
+                options: largeChartOptions({
+                    spanGaps: true,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            enabled: false,
+                            external: externalTooltipHandler,
+                            callbacks: {
+                                title: items => items.length ? `Solve #${Math.round(items[0].raw.x)}` : '',
+                                label: item => `${item.dataset.label}: ${Number(item.raw.y).toFixed(1)}%`
+                            }
+                        },
+                        neonGlow: { shadowColor: '#3b82f6', shadowBlur: 6 }
+                    },
+                    scales: {
+                        x: solveIndexScale(),
+                        y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.02)' }, title: { display: true, text: 'Consistencia (%)' } }
+                    }
+                })
+            });
+        }
+
+        function renderTimeframeChart() {
+            if (charts['timeframe']) charts['timeframe'].destroy();
+            let sourceData = currentTimeframe === 'monthly' ? globalData.monthlyData : globalData.weeklyData;
+            let labels = Object.keys(sourceData).sort();
+            let dataAvg = [], colors = [];
+
+            for (let i = 0; i < labels.length; i++) {
+                let times = sourceData[labels[i]];
+                let avg = times.reduce((a, b) => a + b, 0) / (times.length || 1);
+                dataAvg.push(avg);
+                if (i === 0) colors.push('#818cf8');
+                else colors.push(avg < dataAvg[i - 1] ? '#10b981' : '#ef4444');
+            }
+
+            const ctx = document.getElementById('barChart').getContext('2d');
+            charts['timeframe'] = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: labels, datasets: [{ label: 'Promedio', data: dataAvg, backgroundColor: colors, borderRadius: 5 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: 12 },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false, external: externalTooltipHandler },
+                        neonGlow: { shadowColor: '#f59e0b', shadowBlur: 6 }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: 'rgba(255,255,255,0.02)' }, title: { display: true, text: 'Segundos' } }
+                    }
+                }
+            });
+        }
+
+        function renderDeltaChart() {
+            if (charts['delta']) charts['delta'].destroy();
+            let labels = Object.keys(globalData.weeklyData).sort();
+            if (labels.length < 2) return;
+
+            let weeklyAvgs = labels.map(l => {
+                let times = globalData.weeklyData[l];
+                return times.reduce((a, b) => a + b, 0) / times.length;
+            });
+
+            let deltas = [], deltaColors = [];
+            for (let i = 1; i < weeklyAvgs.length; i++) {
+                let diff = (weeklyAvgs[i] - weeklyAvgs[i - 1]) * 1000;
+                deltas.push(diff);
+                deltaColors.push(diff <= 0 ? '#10b981' : '#ef4444');
+            }
+
+            const ctx = document.getElementById('deltaChart').getContext('2d');
+            charts['delta'] = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: labels.slice(1), datasets: [{ label: 'Diferencia (ms)', data: deltas, backgroundColor: deltaColors, borderRadius: 3 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: 12 },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false, external: externalTooltipHandler }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: 'rgba(255,255,255,0.02)' }, title: { display: true, text: 'Milisegundos (ms)' } }
+                    }
+                }
+            });
+        }
+
+        // --- TIMEFRAME DISTRIBUTION FILTERING (USER REQUEST) ---
+        function isValidDate(date) {
+            return date instanceof Date && !isNaN(date.getTime());
+        }
+
+        function toInputDate(date) {
+            if (!isValidDate(date)) return '';
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function parseInputDate(value) {
+            const parts = String(value || '').split('-').map(Number);
+            if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+            return new Date(parts[0], parts[1] - 1, parts[2]);
+        }
+
+        function getSolveDateRange() {
+            const dates = parsedSolves
+                .map(s => s.dateObj)
+                .filter(isValidDate)
+                .sort((a, b) => a - b);
+
+            return {
+                min: dates.length ? new Date(dates[0]) : null,
+                max: dates.length ? new Date(dates[dates.length - 1]) : null
+            };
+        }
+
+        function initializeDistributionDateRange() {
+            const range = getSolveDateRange();
+            const startInput = document.getElementById('distStartDate');
+            const endInput = document.getElementById('distEndDate');
+
+            if (!range.min || !range.max) return;
+
+            const min = toInputDate(range.min);
+            const max = toInputDate(range.max);
+            startInput.min = min;
+            startInput.max = max;
+            endInput.min = min;
+            endInput.max = max;
+
+            if (!startInput.value || startInput.value < min || startInput.value > max) {
+                startInput.value = min;
+            }
+            if (!endInput.value || endInput.value < min || endInput.value > max) {
+                endInput.value = max;
+            }
+
+            lastDistributionReferenceDate = new Date(range.max);
+        }
+
+        function getDistributionReferenceDate() {
+            const range = getSolveDateRange();
+            return range.max ? new Date(range.max) : new Date();
+        }
+
+        function getDateOffset(referenceDate, options) {
+            const result = new Date(referenceDate);
+            if (options.hours) result.setHours(result.getHours() - options.hours);
+            if (options.days) result.setDate(result.getDate() - options.days);
+            if (options.months) result.setMonth(result.getMonth() - options.months);
+            if (options.years) result.setFullYear(result.getFullYear() - options.years);
+            return result;
+        }
+
+        function filterByRecentDate(referenceDate, offsetOptions) {
+            const start = getDateOffset(referenceDate, offsetOptions);
+            return parsedSolves.filter(s => isValidDate(s.dateObj) && s.dateObj >= start && s.dateObj <= referenceDate);
+        }
+
+        function selectDistTimeframe(value, btnEl) {
+            document.getElementById('distTimeFilter').value = value;
+            document.querySelectorAll('.dist-pill').forEach(btn => btn.classList.remove('active'));
+            if (btnEl) btnEl.classList.add('active');
+            applyDistributionFilter();
+        }
+
+        function applyDistributionFilter() {
+            const period = document.getElementById('distTimeFilter').value;
+            const customDatesDiv = document.getElementById('distCustomDates');
+            
+            if (period === 'custom') {
+                customDatesDiv.classList.add('open');
+            } else {
+                customDatesDiv.classList.remove('open');
+            }
+
+            let filtered = [];
+            let referenceDate = getDistributionReferenceDate();
+            lastDistributionReferenceDate = referenceDate;
+
+            if (period === 'all') {
+                filtered = parsedSolves.slice();
+            } else if (period.startsWith('last')) {
+                let count = parseInt(period.replace('last', ''));
+                filtered = parsedSolves.slice(-count);
+            } else if (period === '24h') {
+                filtered = filterByRecentDate(referenceDate, { hours: 24 });
+            } else if (period === '7d') {
+                filtered = filterByRecentDate(referenceDate, { days: 7 });
+            } else if (period === '30d') {
+                filtered = filterByRecentDate(referenceDate, { days: 30 });
+            } else if (period === '6m') {
+                filtered = filterByRecentDate(referenceDate, { months: 6 });
+            } else if (period === '1y') {
+                filtered = filterByRecentDate(referenceDate, { years: 1 });
+            } else if (period === 'custom') {
+                let startInput = document.getElementById('distStartDate').value;
+                let endInput = document.getElementById('distEndDate').value;
+                if (!startInput || !endInput) {
+                    filtered = parsedSolves.slice();
+                } else {
+                    let dStart = parseInputDate(startInput);
+                    let dEnd = parseInputDate(endInput);
+                    if (!dStart || !dEnd) {
+                        filtered = parsedSolves.slice();
+                    } else {
+                        dEnd.setHours(23, 59, 59, 999);
+                        filtered = parsedSolves.filter(s => isValidDate(s.dateObj) && s.dateObj >= dStart && s.dateObj <= dEnd);
+                    }
+                }
+            }
+
+            distFilteredSolves = filtered;
+            
+            let ratio = parsedSolves.length > 0 ? ((filtered.length / parsedSolves.length) * 100).toFixed(1) : 0;
+            const validFiltered = filtered.filter(s => !s.isDNF);
+            let avgVal = validFiltered.length > 0 ? (validFiltered.reduce((acc, s) => acc + s.time, 0) / validFiltered.length).toFixed(2) + 's' : '-';
+            
+            document.getElementById('dist-filter-badge').innerHTML = `Mostrando ${filtered.length} de ${parsedSolves.length} solves (${ratio}%) | Promedio: ${avgVal}`;
+
+            // Compute slices
+            let filteredPies = { subX: [0, 0, 0, 0, 0, 0], secondsBucket: {} };
+            filtered.forEach(s => {
+                if (!s.isDNF) {
+                    if (s.time < 10) filteredPies.subX[0]++;
+                    else if (s.time < 12) filteredPies.subX[1]++;
+                    else if (s.time < 15) filteredPies.subX[2]++;
+                    else if (s.time < 20) filteredPies.subX[3]++;
+                    else filteredPies.subX[4]++;
+
+                    let sec = Math.floor(s.time);
+                    filteredPies.secondsBucket[sec] = (filteredPies.secondsBucket[sec] || 0) + 1;
+                } else {
+                    filteredPies.subX[5]++;
+                }
+            });
+
+            drawPieCharts(filteredPies);
+            updateTargetSubGoal();
+        }
+
+        function updateTargetSubGoal() {
+            const slider = document.getElementById('target-sub-slider');
+            const targetVal = parseFloat(slider.value);
+            document.getElementById('target-sub-val').innerText = `${targetVal.toFixed(1)}s`;
+            
+            if (distFilteredSolves.length === 0) {
+                document.getElementById('target-pct-text').innerText = "0%";
+                document.getElementById('target-progress-circle').style.strokeDashoffset = 251.2;
+                document.getElementById('target-stats-feedback').innerText = "0 de 0 solves por debajo de " + targetVal.toFixed(1) + "s";
+                document.getElementById('target-motivational-msg').innerText = "¡Sube tus resoluciones para medir tu progreso!";
+                return;
+            }
+            
+            const validSolves = distFilteredSolves.filter(s => !s.isDNF);
+            const subCount = validSolves.filter(s => s.time < targetVal).length;
+            const pct = distFilteredSolves.length > 0 ? (subCount / distFilteredSolves.length) * 100 : 0;
+            
+            document.getElementById('target-pct-text').innerText = `${pct.toFixed(0)}%`;
+            
+            const circumference = 251.2;
+            const strokeDashoffset = circumference - (pct / 100) * circumference;
+            document.getElementById('target-progress-circle').style.strokeDashoffset = strokeDashoffset;
+            
+            document.getElementById('target-stats-feedback').innerText = `${subCount} de ${distFilteredSolves.length} solves por debajo de ${targetVal.toFixed(1)}s`;
+            
+            let msg = "";
+            if (pct === 0) msg = "¡Sigue practicando! Cada intento cuenta.";
+            else if (pct < 25) msg = "¡Estás empezando! Enfócate en tu fluidez.";
+            else if (pct < 50) msg = "¡Vas por buen camino! Consistencia es la clave.";
+            else if (pct < 75) msg = "¡Impresionante! Estás dominando tu meta.";
+            else if (pct < 90) msg = "¡Rendimiento de élite! Casi perfecto.";
+            else msg = "¡Nivel Dios Cuber! Domina el podio.";
+            
+            document.getElementById('target-motivational-msg').innerText = msg;
+        }
+
+        function drawPieCharts(pieData) {
+            if (!pieData) return;
+            if (charts['pie1']) charts['pie1'].destroy();
+            if (charts['pie2']) charts['pie2'].destroy();
+
+            // Doughnut chart for milestones
+            charts['pie1'] = new Chart(document.getElementById('pieSubX').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Sub-10', 'Sub-12', 'Sub-15', '15s - 20s', '20s+', 'DNF'],
+                    datasets: [{
+                        data: pieData.subX,
+                        backgroundColor: ['#3b82f6', '#6366f1', '#8b5cf6', '#64748b', '#334155', '#dc2626'],
+                        borderWidth: 0,
+                        hoverOffset: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: { top: 24, right: 24, bottom: 24, left: 24 } },
+                    radius: '82%',
+                    cutout: '48%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false, external: externalTooltipHandler },
+                        neonGlow: { shadowColor: '#6366f1', shadowBlur: 8 }
+                    }
+                }
+            });
+
+            // Pie chart for seconds
+            let secKeys = Object.keys(pieData.secondsBucket).sort((a, b) => parseInt(a) - parseInt(b));
+            let secLabels = secKeys.map(k => k + 's');
+            let secData = secKeys.map(k => pieData.secondsBucket[k]);
+            let secColors = secKeys.map((k, i) => `hsl(${200 + (i * 15)}, 70%, 55%)`);
+
+            charts['pie2'] = new Chart(document.getElementById('pieSeconds').getContext('2d'), {
+                type: 'pie',
+                data: {
+                    labels: secLabels,
+                    datasets: [{ data: secData, backgroundColor: secColors, borderWidth: 0, hoverOffset: 6 }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: { top: 24, right: 24, bottom: 24, left: 24 } },
+                    radius: '82%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false, external: externalTooltipHandler },
+                        neonGlow: { shadowColor: '#f43f5e', shadowBlur: 7 }
+                    }
+                }
+            });
+        }
+
+        // --- HABITS CHARTS ---
+        function drawHourlyChart(hourlyData) {
+            if (charts['hourly']) charts['hourly'].destroy();
+            let labels = [], dataAvg = [];
+            for (let i = 0; i < 96; i++) {
+                let h = Math.floor(i / 4);
+                let m = (i % 4) * 15;
+                labels.push(`${h}:${m === 0 ? '00' : m}`);
+                dataAvg.push(hourlyData[i] && hourlyData[i].length > 0 ? hourlyData[i].reduce((a, b) => a + b, 0) / hourlyData[i].length : null);
+            }
+            charts['hourly'] = new Chart(document.getElementById('hourlyChart').getContext('2d'), {
+                type: 'line',
+                data: { labels: labels, datasets: [{ data: dataAvg, borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.08)', fill: true, tension: 0.35, borderWidth: 2, pointRadius: 0 }] },
+                options: {
+                    spanGaps: true,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false, external: externalTooltipHandler }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: 'rgba(255, 255, 255, 0.02)' }, title: { display: true, text: 'Segundos' } }
+                    }
+                }
+            });
+        }
+
+        function drawWeekdayChart(weekdayData) {
+            if (charts['weekday']) charts['weekday'].destroy();
+            charts['weekday'] = new Chart(document.getElementById('weekdayChart').getContext('2d'), {
+                type: 'bar',
+                data: { labels: ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'], datasets: [{ data: Object.values(weekdayData), backgroundColor: '#818cf8', borderRadius: 4 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false, external: externalTooltipHandler },
+                        neonGlow: { shadowColor: '#818cf8', shadowBlur: 6 }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: 'rgba(255, 255, 255, 0.02)' }, title: { display: true, text: 'Cantidad' } }
+                    }
+                }
+            });
+        }
+
+        // --- DATATABLE GRID & EXPLORER ---
+        function escapeHTML(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
+        }
+
+        function escapeRegex(value) {
+            return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function highlightSearchMatch(value, searchText) {
+            const safeValue = escapeHTML(value);
+            if (!searchText) return safeValue;
+            const pattern = new RegExp(`(${escapeRegex(escapeHTML(searchText))})`, 'gi');
+            return safeValue.replace(pattern, '<mark class="search-hit">$1</mark>');
+        }
+
+        function selectExplorerFilter(value, btnEl) {
+            document.getElementById('filterSelect').value = value;
+            document.querySelectorAll('.explorer-filter-pill').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (btnEl) {
+                btnEl.classList.add('active');
+            }
+            applyExplorerFilters();
+        }
+
+        function copyExplorerScramble(globalIndex) {
+            const solve = parsedSolves.find(s => s.globalIndex === globalIndex);
+            if (solve) copyToClipboard(solve.scramble);
+        }
+
+        function applyExplorerFilters() {
+            const filterValue = document.getElementById('filterSelect').value;
+            const searchText = document.getElementById('explorerSearch').value.toLowerCase().trim();
+            
+            let result = parsedSolves.slice();
+
+            result = result.filter(s => {
+                if (filterValue === 'all') return true;
+                if (filterValue === 'sub10' && !s.isDNF && s.time < 10) return true;
+                if (filterValue === 'sub12' && !s.isDNF && s.time < 12) return true;
+                if (filterValue === 'sub15' && !s.isDNF && s.time < 15) return true;
+                if (filterValue === 'dnf' && s.isDNF) return true;
+                if (filterValue === 'plus2' && s.isPlus2) return true;
+                return false;
+            });
+
+            if (searchText) {
+                result = result.filter(s => {
+                    return s.scramble.toLowerCase().includes(searchText) ||
+                           s.time.toString().includes(searchText) ||
+                           s.originalTime.toLowerCase().includes(searchText) ||
+                           s.dateStr.toLowerCase().includes(searchText);
+                });
+            }
+
+            filteredSolves = result;
+            explorerCurrentPage = 1;
+            sortFilteredSolves();
+        }
+
+        function sortExplorer(column) {
+            if (explorerSortColumn === column) {
+                explorerSortOrder = explorerSortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                explorerSortColumn = column;
+                explorerSortOrder = 'desc';
+            }
+
+            ['index', 'date', 'time'].forEach(col => {
+                let icon = document.getElementById(`sort-${col}-icon`);
+                if (icon) {
+                    if (explorerSortColumn === col) {
+                        icon.className = explorerSortOrder === 'asc' ? 'fas fa-sort-up text-sky-400 ml-1' : 'fas fa-sort-down text-sky-400 ml-1';
+                    } else {
+                        icon.className = 'fas fa-sort text-slate-600 ml-1';
+                    }
+                }
+            });
+
+            sortFilteredSolves();
+        }
+
+        function sortFilteredSolves() {
+            filteredSolves.sort((a, b) => {
+                let valA, valB;
+                if (explorerSortColumn === 'index') {
+                    valA = a.globalIndex;
+                    valB = b.globalIndex;
+                } else if (explorerSortColumn === 'date') {
+                    valA = a.dateObj.getTime() || 0;
+                    valB = b.dateObj.getTime() || 0;
+                } else if (explorerSortColumn === 'time') {
+                    valA = a.isDNF ? Infinity : a.time;
+                    valB = b.isDNF ? Infinity : b.time;
+                }
+
+                if (explorerSortOrder === 'asc') {
+                    return valA > valB ? 1 : valA < valB ? -1 : 0;
+                } else {
+                    return valA < valB ? 1 : valA > valB ? -1 : 0;
+                }
+            });
+
+            renderExplorerTable();
+        }
+
+        function syncExplorerPageSize(resetPage = false) {
+            return false;
+        }
+
+        function renderExplorerTable() {
+            const tbody = document.getElementById('dataTableBody');
+            tbody.innerHTML = '';
+            const searchText = document.getElementById('explorerSearch').value.toLowerCase().trim();
+
+            let total = filteredSolves.length;
+            syncExplorerPageSize(false);
+            const totalPages = Math.max(1, Math.ceil(total / explorerPageSize));
+            if (explorerCurrentPage > totalPages) explorerCurrentPage = totalPages;
+
+            let startIndex = (explorerCurrentPage - 1) * explorerPageSize;
+            let endIndex = Math.min(startIndex + explorerPageSize, total);
+
+            let pageData = filteredSolves.slice(startIndex, endIndex);
+
+            pageData.forEach(s => {
+                let timeHtml = '';
+                if (s.isDNF) {
+                    timeHtml = '<span class="text-rose-400 font-bold bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded">DNF</span>';
+                } else if (s.isPlus2) {
+                    timeHtml = `<span class="text-amber-400 font-bold bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded">${highlightSearchMatch(s.originalTime, searchText)}</span>`;
+                } else {
+                    timeHtml = `<span class="text-emerald-300 font-bold font-mono">${highlightSearchMatch(s.originalTime, searchText)}s</span>`;
+                }
+                const safeDate = highlightSearchMatch(s.dateStr, searchText);
+                const safeScramble = highlightSearchMatch(s.scramble, searchText);
+                const titleScramble = escapeHTML(s.scramble);
+
+                tbody.innerHTML += `
+                    <tr onclick="openSolveDrawer(${s.globalIndex})" class="border-b border-slate-800/40 hover:bg-slate-900/40 hover:cursor-pointer transition-colors">
+                        <td class="py-2 px-4 text-slate-500 font-mono">${s.globalIndex}</td>
+                        <td class="py-2 px-4 text-slate-400 font-mono text-[11px]">${safeDate}</td>
+                        <td class="py-2 px-4 text-[14px]">${timeHtml}</td>
+                        <td class="py-2 px-4">
+                            <div class="flex items-center justify-between gap-3 max-w-xs md:max-w-md lg:max-w-lg">
+                                <span class="font-mono text-[11px] text-slate-400 truncate" title="${titleScramble}">${safeScramble}</span>
+                                <button onclick="event.stopPropagation(); copyExplorerScramble(${s.globalIndex})" class="text-slate-600 hover:text-slate-300 transition-colors p-1" title="Copiar Scramble">
+                                    <i class="far fa-copy text-xs"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('explorer-entry-info').innerText = total > 0 ? 
+                `Mostrando ${startIndex + 1} a ${endIndex} de ${total} elementos` : 
+                'Mostrando 0 a 0 de 0 elementos';
+
+            renderExplorerPagination(total);
+        }
+
+        function renderExplorerPagination(total) {
+            const paginationDiv = document.getElementById('explorer-pagination');
+            paginationDiv.innerHTML = '';
+
+            let totalPages = Math.ceil(total / explorerPageSize);
+            if (totalPages <= 1) return;
+
+            let maxVisiblePages = 5;
+            let startPage = Math.max(1, explorerCurrentPage - Math.floor(maxVisiblePages / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+            if (endPage - startPage < maxVisiblePages - 1) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+            }
+
+            let prevDisabled = explorerCurrentPage === 1;
+            paginationDiv.innerHTML += `
+                <button onclick="${prevDisabled ? '' : 'changeExplorerPage(' + (explorerCurrentPage - 1) + ')'}" class="ctrl-btn text-xs px-2.5 py-1 ${prevDisabled ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-800 hover:text-white'}" ${prevDisabled ? 'disabled' : ''}>
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+            `;
+
+            for (let p = startPage; p <= endPage; p++) {
+                let isActive = p === explorerCurrentPage;
+                paginationDiv.innerHTML += `
+                    <button onclick="changeExplorerPage(${p})" class="ctrl-btn text-xs w-7 h-7 flex items-center justify-center font-bold ${isActive ? 'active' : 'hover:bg-slate-800 text-slate-400 hover:text-white'}">
+                        ${p}
+                    </button>
+                `;
+            }
+
+            let nextDisabled = explorerCurrentPage === totalPages;
+            paginationDiv.innerHTML += `
+                <button onclick="${nextDisabled ? '' : 'changeExplorerPage(' + (explorerCurrentPage + 1) + ')'}" class="ctrl-btn text-xs px-2.5 py-1 ${nextDisabled ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-800 hover:text-white'}" ${nextDisabled ? 'disabled' : ''}>
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            `;
+        }
+
+        function changeExplorerPage(p) {
+            explorerCurrentPage = p;
+            renderExplorerTable();
+        }
+
+        function onExplorerSearch() {
+            applyExplorerFilters();
+        }
+
+        function csvEscape(value) {
+            return `"${String(value ?? '').replace(/"/g, '""')}"`;
+        }
+
+        function downloadFilteredCSV() {
+            if (filteredSolves.length === 0) {
+                showToast('Descarga cancelada', 'No hay datos filtrados para exportar.', 'warning');
+                return;
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,Index,Time,Scramble,Date\n";
+            filteredSolves.forEach(s => {
+                csvContent += `${s.globalIndex},${csvEscape(s.originalTime)},${csvEscape(s.scramble)},${csvEscape(s.dateStr)}\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `cubetracker_export_filtered_${new Date().toISOString().slice(0,10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            showToast('Exportación Exitosa', `Se exportaron ${filteredSolves.length} filas.`, 'success');
+        }
+
+        // --- 3x3 RUBIK'S CUBE ENGINE ---
+        class RubiksCube {
+            constructor() {
+                this.faces = {
+                    U: Array(9).fill('y'),
+                    D: Array(9).fill('w'),
+                    F: Array(9).fill('g'),
+                    B: Array(9).fill('b'),
+                    L: Array(9).fill('o'),
+                    R: Array(9).fill('r')
+                };
+            }
+
+            rotateFaceCW(face) {
+                const f = this.faces[face];
+                const temp = [f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8]];
+                f[0] = temp[6]; f[1] = temp[3]; f[2] = temp[0];
+                f[3] = temp[7];                 f[5] = temp[1];
+                f[6] = temp[8]; f[7] = temp[5]; f[8] = temp[2];
+            }
+
+            move(m) {
+                if (!m || !'UDLRFB'.includes(m[0])) return;
+                if (m.endsWith("2")) {
+                    this.applyMoveSingle(m[0]);
+                    this.applyMoveSingle(m[0]);
+                } else if (m.endsWith("'")) {
+                    this.applyMoveSingle(m[0]);
+                    this.applyMoveSingle(m[0]);
+                    this.applyMoveSingle(m[0]);
+                } else {
+                    this.applyMoveSingle(m);
+                }
+            }
+
+            applyMoveSingle(f) {
+                if (f === 'U') {
+                    this.rotateFaceCW('U');
+                    const temp = [this.faces.F[0], this.faces.F[1], this.faces.F[2]];
+                    this.faces.F[0] = this.faces.R[0]; this.faces.F[1] = this.faces.R[1]; this.faces.F[2] = this.faces.R[2];
+                    this.faces.R[0] = this.faces.B[0]; this.faces.R[1] = this.faces.B[1]; this.faces.R[2] = this.faces.B[2];
+                    this.faces.B[0] = this.faces.L[0]; this.faces.B[1] = this.faces.L[1]; this.faces.B[2] = this.faces.L[2];
+                    this.faces.L[0] = temp[0];         this.faces.L[1] = temp[1];         this.faces.L[2] = temp[2];
+                }
+                else if (f === 'D') {
+                    this.rotateFaceCW('D');
+                    const temp = [this.faces.F[6], this.faces.F[7], this.faces.F[8]];
+                    this.faces.F[6] = this.faces.L[6]; this.faces.F[7] = this.faces.L[7]; this.faces.F[8] = this.faces.L[8];
+                    this.faces.L[6] = this.faces.B[6]; this.faces.L[7] = this.faces.B[7]; this.faces.L[8] = this.faces.B[8];
+                    this.faces.B[6] = this.faces.R[6]; this.faces.B[7] = this.faces.R[7]; this.faces.B[8] = this.faces.R[8];
+                    this.faces.R[6] = temp[0];         this.faces.R[7] = temp[1];         this.faces.R[8] = temp[2];
+                }
+                else if (f === 'F') {
+                    this.rotateFaceCW('F');
+                    const temp = [this.faces.U[6], this.faces.U[7], this.faces.U[8]];
+                    this.faces.U[6] = this.faces.L[8]; this.faces.U[7] = this.faces.L[5]; this.faces.U[8] = this.faces.L[2];
+                    this.faces.L[8] = this.faces.D[2]; this.faces.L[5] = this.faces.D[1]; this.faces.L[2] = this.faces.D[0];
+                    this.faces.D[2] = this.faces.R[0]; this.faces.D[1] = this.faces.R[3]; this.faces.D[0] = this.faces.R[6];
+                    this.faces.R[0] = temp[0];         this.faces.R[3] = temp[1];         this.faces.R[6] = temp[2];
+                }
+                else if (f === 'B') {
+                    this.rotateFaceCW('B');
+                    const temp = [this.faces.U[2], this.faces.U[1], this.faces.U[0]];
+                    this.faces.U[2] = this.faces.R[8]; this.faces.U[1] = this.faces.R[5]; this.faces.U[0] = this.faces.R[2];
+                    this.faces.R[8] = this.faces.D[8]; this.faces.R[5] = this.faces.D[7]; this.faces.R[2] = this.faces.D[6];
+                    this.faces.D[8] = this.faces.L[0]; this.faces.D[7] = this.faces.L[3]; this.faces.D[6] = this.faces.L[6];
+                    this.faces.L[0] = temp[0];         this.faces.L[3] = temp[1];         this.faces.L[6] = temp[2];
+                }
+                else if (f === 'L') {
+                    this.rotateFaceCW('L');
+                    const temp = [this.faces.U[0], this.faces.U[3], this.faces.U[6]];
+                    this.faces.U[0] = this.faces.B[8]; this.faces.U[3] = this.faces.B[5]; this.faces.U[6] = this.faces.B[2];
+                    this.faces.B[8] = this.faces.D[0]; this.faces.B[5] = this.faces.D[3]; this.faces.B[2] = this.faces.D[6];
+                    this.faces.D[0] = this.faces.F[0]; this.faces.D[3] = this.faces.F[3]; this.faces.D[6] = this.faces.F[6];
+                    this.faces.F[0] = temp[0];         this.faces.F[3] = temp[1];         this.faces.F[6] = temp[2];
+                }
+                else if (f === 'R') {
+                    this.rotateFaceCW('R');
+                    const temp = [this.faces.F[2], this.faces.F[5], this.faces.F[8]];
+                    this.faces.F[2] = this.faces.D[2]; this.faces.F[5] = this.faces.D[5]; this.faces.F[8] = this.faces.D[8];
+                    this.faces.D[2] = this.faces.B[6]; this.faces.D[5] = this.faces.B[3]; this.faces.D[8] = this.faces.B[0];
+                    this.faces.B[6] = this.faces.U[2]; this.faces.B[3] = this.faces.U[5]; this.faces.B[0] = this.faces.U[8];
+                    this.faces.U[2] = temp[0];         this.faces.U[5] = temp[1];         this.faces.U[8] = temp[2];
+                }
+            }
+
+            scramble(scrambleStr) {
+                if (!scrambleStr || scrambleStr === 'N/A') return;
+                const moves = scrambleStr.trim().split(/\s+/);
+                moves.forEach(m => {
+                    if (m) this.move(m.toUpperCase());
+                });
+            }
+        }
+
+        const colorMap = {
+            y: '#f8fafc', // White
+            w: '#fbbf24', // Yellow
+            g: '#10b981', // Green
+            b: '#3b82f6', // Blue
+            o: '#f97316', // Orange
+            r: '#ef4444'  // Red
+        };
+
+        const faceCoords = {
+            U: { x: 52, y: 2 },
+            L: { x: 2, y: 52 },
+            F: { x: 52, y: 52 },
+            R: { x: 102, y: 52 },
+            B: { x: 152, y: 52 },
+            D: { x: 52, y: 102 }
+        };
+
+        function generateSVGNet(cube) {
+            let svg = `<svg width="202" height="152" viewBox="0 0 202 152" xmlns="http://www.w3.org/2000/svg" style="background:transparent;">`;
+            const faces = ['U', 'L', 'F', 'R', 'B', 'D'];
+            
+            faces.forEach(face => {
+                const coord = faceCoords[face];
+                const fData = cube.faces[face];
+                
+                svg += `<rect x="${coord.x - 1}" y="${coord.y - 1}" width="48" height="48" rx="4" fill="#02040a" stroke="#1e293b" stroke-width="1.5" />`;
+                
+                for (let i = 0; i < 9; i++) {
+                    const r = Math.floor(i / 3);
+                    const c = i % 3;
+                    const sx = coord.x + c * 15 + 2;
+                    const sy = coord.y + r * 15 + 2;
+                    const colorCode = fData[i];
+                    const hexColor = colorMap[colorCode] || '#334155';
+                    
+                    svg += `<rect x="${sx}" y="${sy}" width="13" height="13" rx="2.5" fill="${hexColor}" stroke="rgba(0,0,0,0.25)" stroke-width="0.75" />`;
+                }
+            });
+            
+            svg += `</svg>`;
+            return svg;
+        }
+
+        // --- SOLVE DETAIL DRAWER NAVIGATION ---
+        function getDrawerSequence() {
+            const source = filteredSolves.length > 0 ? filteredSolves : parsedSolves;
+            return source.map(s => s.globalIndex);
+        }
+
+        function getDrawerButtonClass(disabled) {
+            return disabled ?
+                "flex-1 bg-slate-900/40 border border-slate-950 text-slate-600 py-2.5 rounded-xl text-xs font-bold cursor-not-allowed transition-all flex items-center justify-center gap-2" :
+                "flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2";
+        }
+
+        function updateDrawerNavigation(globalIndex) {
+            const sequence = getDrawerSequence();
+            const position = sequence.indexOf(globalIndex);
+            const prevDisabled = position <= 0;
+            const nextDisabled = position === -1 || position >= sequence.length - 1;
+            const prevBtn = document.getElementById('drawer-btn-prev');
+            const nextBtn = document.getElementById('drawer-btn-next');
+
+            prevBtn.disabled = prevDisabled;
+            nextBtn.disabled = nextDisabled;
+            prevBtn.className = getDrawerButtonClass(prevDisabled);
+            nextBtn.className = getDrawerButtonClass(nextDisabled);
+        }
+
+        function openSolveDrawer(globalIndex) {
+            globalIndex = Number(globalIndex);
+            currentDrawerIndex = globalIndex;
+            const s = parsedSolves.find(x => x.globalIndex === globalIndex);
+            if (!s) return;
+            
+            document.getElementById('drawer-index-num').innerText = `#${s.globalIndex}`;
+            document.getElementById('drawer-date-str').innerText = s.dateStr;
+            
+            let timeValEl = document.getElementById('drawer-time-val');
+            let badgeContainer = document.getElementById('drawer-badge-container');
+            badgeContainer.innerHTML = '';
+            
+            if (s.isDNF) {
+                timeValEl.innerText = 'DNF';
+                timeValEl.className = "text-5xl font-black text-rose-500 font-mono tracking-tight";
+                badgeContainer.innerHTML = `<span class="px-2.5 py-1 bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold rounded-lg text-[10px] uppercase font-mono">Did Not Finish</span>`;
+            } else {
+                timeValEl.innerText = `${s.time.toFixed(2)}s`;
+                timeValEl.className = "text-5xl font-black text-white font-mono tracking-tight";
+                
+                if (s.isPlus2) {
+                    badgeContainer.innerHTML += `<span class="px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold rounded-lg text-[10px] uppercase font-mono">+2 Segundos</span>`;
+                }
+                if (s.time < 10) {
+                    badgeContainer.innerHTML += `<span class="px-2.5 py-1 bg-sky-500/10 border border-sky-500/30 text-sky-400 font-bold rounded-lg text-[10px] uppercase font-mono">Sub-10 Élite</span>`;
+                } else if (s.time < 12) {
+                    badgeContainer.innerHTML += `<span class="px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 font-bold rounded-lg text-[10px] uppercase font-mono">Sub-12 Leyenda</span>`;
+                } else if (s.time < 15) {
+                    badgeContainer.innerHTML += `<span class="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold rounded-lg text-[10px] uppercase font-mono">Sub-15 Maestro</span>`;
+                }
+            }
+            
+            document.getElementById('drawer-scramble-text').innerText = s.scramble;
+            
+            const cube = new RubiksCube();
+            cube.scramble(s.scramble);
+            document.getElementById('drawer-net-svg-container').innerHTML = generateSVGNet(cube);
+            
+            updateDrawerNavigation(globalIndex);
+            
+            const drawer = document.getElementById('solveDrawer');
+            const backdrop = document.getElementById('drawerBackdrop');
+            
+            backdrop.classList.remove('hidden');
+            setTimeout(() => {
+                backdrop.classList.add('opacity-100');
+                drawer.classList.remove('translate-x-full');
+            }, 20);
+        }
+
+        function closeSolveDrawer() {
+            const drawer = document.getElementById('solveDrawer');
+            const backdrop = document.getElementById('drawerBackdrop');
+            
+            drawer.classList.add('translate-x-full');
+            backdrop.classList.remove('opacity-100');
+            setTimeout(() => {
+                backdrop.classList.add('hidden');
+            }, 400);
+        }
+
+        function navigateDrawer(direction) {
+            if (currentDrawerIndex === null) return;
+            const sequence = getDrawerSequence();
+            const position = sequence.indexOf(currentDrawerIndex);
+            const nextIndex = position === -1 ? currentDrawerIndex + direction : sequence[position + direction];
+            if (nextIndex !== undefined) {
+                openSolveDrawer(nextIndex);
+            }
+        }
+        
+        function copyDrawerScramble() {
+            const text = document.getElementById('drawer-scramble-text').innerText;
+            copyToClipboard(text);
+        }
+
+        // Color helper
+        function hexToRgbA(hex, alpha = 1) {
+            let c;
+            if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+                c = hex.substring(1).split('');
+                if (c.length == 3) {
+                    c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+                }
+                c = '0x' + c.join('');
+                return 'rgba(' + [(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',') + ',' + alpha + ')';
+            }
+            return hex;
+        }
+    </script>
+</body>
+
+</html>

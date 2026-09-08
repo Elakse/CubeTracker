@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f6f2" />
+    <meta
+      name="description"
+      content="A focused workspace for speedcubing. Time your solves, explore scrambles, and understand your progress."
+    />
+    <title>CubeTracker — Find your rhythm</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%232c5546'/%3E%3Cpath d='m20 8 11 6v12l-11 6-11-6V14zm0 12 11-6M20 20 9 14m11 6v12' fill='none' stroke='%23e2ee98' stroke-width='2'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="assets/style.css" />
+    <script defer src="assets/core.js"></script>
+    <script defer src="assets/app.js"></script>
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="CubeTracker home"
+          ><span class="brandmark" data-icon="cube"></span
+          ><span>cubetracker<span class="brand-dot">.</span></span></a
+        >
+        <div class="workspace-label">YOUR WORKSPACE</div>
+        <nav class="main-nav" aria-label="Main navigation">
+          <button data-view="overview" class="nav-item active">
+            <span data-icon="grid"></span>Overview
+          </button>
+          <button data-view="timer" class="nav-item">
+            <span data-icon="timer"></span>Timer<span class="nav-key">T</span>
+          </button>
+          <button data-view="solves" class="nav-item">
+            <span data-icon="list"></span>Solve library
+          </button>
+          <button data-view="insights" class="nav-item">
+            <span data-icon="chart"></span>Insights
+          </button>
+        </nav>
+        <div class="category-heading">
+          <span>CATEGORIES</span
+          ><button
+            class="icon-btn"
+            data-action="category"
+            aria-label="Create category"
+            title="Create category"
+          >
+            <span data-icon="plus"></span>
+          </button>
+        </div>
+        <div id="category-list" class="category-list"></div>
+        <button class="add-category" data-action="category">
+          <span data-icon="plus"></span>New category
+        </button>
+        <div class="sidebar-bottom">
+          <div class="practice-note">
+            <span class="note-orbit">↗</span>
+            <p>A little more consistent.<br />A little faster. Every day.</p>
+          </div>
+          <button class="nav-item" data-action="help">
+            <span data-icon="help"></span>Guide & shortcuts
+          </button>
+          <button
+            class="icon-btn mobile-storage"
+            data-action="storage"
+            aria-label="Storage details"
+          >
+            <span data-icon="folder"></span>
+          </button>
+          <div class="storage-state">
+            <span id="storage-dot" class="status-dot"></span>
+            <div>
+              <strong id="storage-label">Opening workspace</strong
+              ><span id="storage-detail">Your times, your files.</span>
+            </div>
+            <button
+              class="icon-btn"
+              data-action="storage"
+              aria-label="Storage details"
+            >
+              <span data-icon="arrow-up-right"></span>
+            </button>
+          </div>
+        </div>
+      </aside>
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="breadcrumb">
+            <span>Workspace</span><span class="slash">/</span
+            ><strong id="page-label">Overview</strong>
+          </div>
+          <div class="top-actions">
+            <span class="local-badge"
+              ><span class="status-dot"></span>LOCAL WORKSPACE</span
+            ><button class="btn btn-quiet" data-action="import">
+              <span data-icon="upload"></span>Import CSV</button
+            ><button class="btn btn-dark" data-action="practice">
+              <span data-icon="play"></span>Start solving
+            </button>
+          </div>
+        </header>
+        <main id="main" tabindex="-1"></main>
+        <footer class="footer">
+          <span>BUILT FOR THE NEXT PERSONAL BEST.</span
+          ><span id="footer-meta">3 × 3 · Your practice, in perspective</span>
+        </footer>
+      </div>
+    </div>
+    <input id="file-input" type="file" accept=".csv,text/csv" hidden />
+    <dialog id="dialog" aria-labelledby="dialog-title">
+      <div id="dialog-content"></div>
+    </dialog>
+    <div
+      id="toast-region"
+      class="toast-region"
+      aria-live="polite"
+      aria-atomic="false"
+    ></div>
+    <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+  </body>
+</html>
