@@ -33,6 +33,21 @@ const QUALITY = {
 // tools/bake-wear-textures.py is the same number; the two have to move together.
 const WEAR_ROUGHNESS_FLOOR = .72;
 
+// Wear changes the material response as well as adding surface detail. These
+// offsets are anchored to the Studio Small 08 UV calibration: its clean
+// clearcoat/highlight-spread pair is .85/.070, and its worn target is
+// .51/.120. Applying the delta instead of replacing the values preserves each
+// model and environment's own calibration.
+const WEAR_MATERIAL_OFFSET = {
+  gloss: .51 - .85,
+  glossRough: .120 - .070,
+};
+const withWearMaterial = (values, wear) => wear ? {
+  ...values,
+  gloss: Math.max(0, Math.min(1, values.gloss + WEAR_MATERIAL_OFFSET.gloss)),
+  glossRough: Math.max(.03, Math.min(.5, values.glossRough + WEAR_MATERIAL_OFFSET.glossRough)),
+} : { ...values };
+
 // How hard each finish wears. One table, for the same reason the rigs are one
 // table: as per-model ternaries these drifted into a single shared strength
 // that suited none of the four.
@@ -218,6 +233,19 @@ const LENS = {
   shutter: .55,
 };
 
+// The cube's internals, seen through the gaps and while a layer is mid-turn.
+// Colour is the whole choice: every option is the same moulded plastic, so the
+// finish is written once here instead of once per colour. White is deliberately
+// off-white and lifted by its environment term — solid white plastic that thin
+// reads as slightly translucent, and a pure 0xffffff core blows out next to the
+// caps. Ids match CUBE_CORES in app.js.
+const CORE_FINISH = {
+  white: { color: 0xdcddd6, roughness: .34, clearcoat: .30, clearcoatRoughness: .16, env: .52 },
+  black: { color: 0x16181b, roughness: .32, clearcoat: .30, clearcoatRoughness: .16, env: .34 },
+  green: { color: 0x1d7a45, roughness: .33, clearcoat: .30, clearcoatRoughness: .16, env: .40 },
+};
+const CORE = id => Object.hasOwn(CORE_FINISH, id) ? id : "black";
+
 // The procedural maps are deterministic: fixed seeds, no inputs, the same bytes
 // for every cube that has ever been built. Rebuilding them per instance was
 // costing well over a tenth of a second of main-thread CPU on every spawn — most
@@ -277,14 +305,14 @@ export function warmCube(model = "tiles", quality = "balanced", environment = "s
 // Hand back the slot's cube, adopting it into `stage` when it can be reused and
 // building a new one when it cannot. Environment is part of the identity: a
 // slot built for the studio cannot become a different photographic cube by adoption.
-export function acquireCube(slot, stage, onUnavailable, model, quality, environment = "studio", wear = false, onReady) {
+export function acquireCube(slot, stage, onUnavailable, model, quality, environment = "studio", wear = false, core = "black", onReady) {
   const live = STUDIO.get(slot);
-  if (live && !live.disposed && live.model === model && live.quality === quality && live.environment === environment && live.wear === wear) {
+  if (live && !live.disposed && live.model === model && live.quality === quality && live.environment === environment && live.wear === wear && live.core === CORE(core)) {
     live.adopt(stage, onUnavailable, onReady);
     return live;
   }
   live?.destroy();
-  const cube = new RealisticCube(stage, onUnavailable, model, quality, environment, wear);
+  const cube = new RealisticCube(stage, onUnavailable, model, quality, environment, wear, core);
   cube.onReady = onReady;
   cube.slot = slot;
   STUDIO.set(slot, cube);
@@ -382,7 +410,7 @@ function scratchClearcoatNormalMap() {
   return wearTexture("worn-uv-clearcoat-normal.png", "Worn UV clearcoat normal");
 }
 
-function coatingNormal(size = 512, strength = 1.15) {
+function coatingNormal(size = 512, strength = .30) {
   // Orange peel: what a sprayed, UV-cured coat actually looks like. The coat
   // does not copy the plastic's micro-texture, it floods it and sets with its
   // own long, shallow undulation, so a softbox reflected in it wanders instead
@@ -678,14 +706,17 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
 }
 
 export class RealisticCube {
-  constructor(stage, onUnavailable, model = "tiles", quality = "balanced", environment = "studio", wear = false) {
+  constructor(stage, onUnavailable, model = "tiles", quality = "balanced", environment = "studio", wear = false, core = "black") {
     this.stage = stage;
     this.model = model;
     this.wear = Boolean(wear);
+    this.core = CORE(core);
     this.quality = Object.hasOwn(QUALITY, quality) ? quality : "balanced";
     this.environment = Object.hasOwn(ENVIRONMENTS, environment) ? environment : "studio";
     const settings = this.settings = QUALITY[this.quality];
-    const baseLight = tuningFor(model, this.environment) ?? tuningFor("tiles", this.environment);
+    const calibratedLight = tuningFor(model, this.environment) ?? tuningFor("tiles", this.environment);
+    this.tuning = { ...calibratedLight };
+    const baseLight = withWearMaterial(this.tuning, this.wear);
     // An entry that states its own scale is known before the HDR arrives, so
     // its materials are built with the final value and never touched again. An
     // entry that is measured starts at the reference reading and is corrected
@@ -738,8 +769,11 @@ export class RealisticCube {
       // UV adds a curved clear surface over the same stickerless cap outlines.
       const speedcube = SCULPTED(model), coated = COATED(model), stickers = model === "stickers";
       this.coating = coated ? sharedMap("coating", () => coatingNormal()) : null;
-      // Recessed internals stay dark; bright reflective gaps flatten the caps.
-      const shell = this.material(new T.MeshPhysicalMaterial({ color: coated ? 0x34383b : speedcube ? 0x6e5a45 : 0x171b20, roughness: coated ? .58 : speedcube ? .6 : .31, metalness: 0, clearcoat: coated ? .12 : speedcube ? .08 : .28, clearcoatRoughness: coated ? .15 : .24, ...(coated ? { envMapIntensity: .12 } : {}), bumpMap: this.grain, bumpScale: coated ? .0004 : .0008 }));
+      // Recessed internals: one moulded plastic for every model, in the colour
+      // the user picked. Injection-moulded ABS, not a painted part, so it keeps
+      // a low clearcoat and a tight highlight rather than reading as rubber.
+      const core = CORE_FINISH[this.core];
+      const shell = this.material(new T.MeshPhysicalMaterial({ color: core.color, roughness: core.roughness, metalness: 0, clearcoat: core.clearcoat, clearcoatRoughness: core.clearcoatRoughness, envMapIntensity: core.env, bumpMap: this.grain, bumpScale: coated ? .0004 : .0008 }));
       const body = this.geometry(new RoundedBoxGeometry(speedcube ? .91 : .972, speedcube ? .91 : .972, speedcube ? .91 : .972, 5, speedcube ? .15 : .105));
       this.bodies = [];
       for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
@@ -1603,9 +1637,10 @@ export class RealisticCube {
   }
   setTuning(values) {
     if (this.disposed || !values) return;
-    const next = { ...this.light, ...values };
+    this.tuning = { ...this.tuning, ...values };
+    const next = withWearMaterial(this.tuning, this.wear);
     this.light = next;
-    this.baseEnv = next.env;
+    this.baseEnv = this.tuning.env;
     this.renderer.toneMappingExposure = next.exposure;
     if (this.postMaterial?.uniforms?.exposure) this.postMaterial.uniforms.exposure.value = next.exposure;
     if (this.hemiLight) this.hemiLight.intensity = next.hemi;

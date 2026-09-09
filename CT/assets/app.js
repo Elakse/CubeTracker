@@ -86,6 +86,14 @@
     speedcube: { label: "Speedcube", detail: "Sculpted, stickerless pieces" },
     uv: { label: "UV Speedcube", detail: "The same pieces under a cured UV coat" },
   };
+  // What the internals are moulded from, seen through the gaps and while a
+  // layer turns. Colour only: the plastic's finish belongs to the renderer,
+  // which keys CORE_FINISH off these same ids.
+  const CUBE_CORES = {
+    white: { label: "White", swatch: "#dcddd6" },
+    black: { label: "Black", swatch: "#16181b" },
+    green: { label: "Green", swatch: "#1d7a45" },
+  };
   // The standard preview keeps its own reset angle; all realistic 3D models
   // share the user's preferred orbit captured from the live cube preview.
   const CUBE_ORBITS = {
@@ -129,6 +137,7 @@
       cubeQuality: "auto",
       cubeEnvironment: "studio",
       cubeWear: false,
+      cubeCore: "black",
       scrambleAnimation: true,
       pressToStart: false,
       videoRecording: false,
@@ -236,6 +245,7 @@
   if (!Object.hasOwn(CUBE_MODELS, pref.cubeFinish)) pref.cubeFinish = "standard";
   if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "studio";
   if (typeof pref.cubeWear !== "boolean") pref.cubeWear = false;
+  if (!Object.hasOwn(CUBE_CORES, pref.cubeCore)) pref.cubeCore = "black";
   // A first guess, not a verdict. Machines that advertise little get the safe
   // level, and nobody is opted into the expensive ones without choosing them.
   if (!Object.hasOwn(CUBE_QUALITY, pref.cubeQuality))
@@ -1436,7 +1446,7 @@ ${rankCard(status)}
         // changes and otherwise adopts the slot's existing renderer — which is
         // what makes a new scramble cost a resize instead of a WebGL context and
         // a shader compile.
-        this.realistic = studio.acquireCube(this.slot, this.stage, () => this.fallbackAppearance(), this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, () => this.ready());
+        this.realistic = studio.acquireCube(this.slot, this.stage, () => this.fallbackAppearance(), this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore, () => this.ready());
         this.realistic.setPalette(CUBE_PALETTES[this.appearance.cubePalette].colors);
         if (this.isStudio && this.appearance.values) this.realistic.setTuning(this.appearance.values);
         this.draw();
@@ -3222,7 +3232,7 @@ ${rankCard(status)}
     // scrolls, so the preview can never be pushed out from under its arrows.
     showDialog(
       "Appearance",
-      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3>Display mode</h3><p>Follow this device, or pin the app to one mode.</p><div class="mode-options">${modes.map(([value, label, detail]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong><small>${detail}</small></button>`).join("")}</div></div><div class="appearance-section"><h3>Color theme</h3><p>Changes the app accents while keeping each display mode balanced.</p><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}"><i class="accent-swatch"></i><span>${label}</span>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><div><span>Cube preview</span><small>Model, surface and light</small></div><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong><span id="cube-model-detail">${model.detail}</span></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div><span class="cube-orbit-hint">Press either side for another cube · drag the middle to rotate · click for 2D</span></div><div class="cube-setting cube-color-setting"><h3>Cube colors</h3><div class="cube-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, p]) => `<button class="cube-palette-choice" data-cube-palette="${value}" aria-pressed="${pref.cubePalette === value}"><span class="cube-color-swatches" aria-hidden="true">${["U", "D", "F", "B", "L", "R"].map(f => `<i style="background:${p.colors[f]}"></i>`).join("")}</span><strong>${p.label}</strong><small>${p.detail}</small></button>`).join("")}</div></div><div class="cube-setting cube-wear-setting"><label class="toggle-row"><input type="checkbox" data-control="cube-wear" ${pref.cubeWear ? "checked" : ""}><span><strong>Surface wear</strong>Fine reflective scratches and subtle handling haze. Turn off for factory-new plastic.</span></label></div><div class="cube-settings-row"><div class="cube-setting"><h3>Graphics quality</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="quality-value">${quality.label}</strong><small id="quality-detail">${quality.detail}</small></span>${icon("down")}</button><div class="quality-menu" role="listbox" aria-label="Graphics quality">${Object.entries(CUBE_QUALITY).map(([value, q]) => `<button type="button" class="quality-option" role="option" data-cube-quality="${value}" aria-selected="${pref.cubeQuality === value}"><span><strong>${q.label}</strong><small>${q.detail}</small></span>${icon("check")}</button>`).join("")}</div></div></div><div class="cube-setting"><h3>Environment</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="environment-value">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}</strong><small id="environment-detail">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].detail}</small></span>${icon("down")}</button><div class="quality-menu environment-menu" role="listbox" aria-label="Reflection environment">${Object.entries(CUBE_ENVIRONMENTS).map(([value, e]) => `<button type="button" class="quality-option" role="option" data-cube-environment="${value}" aria-selected="${pref.cubeEnvironment === value}"><span><strong>${e.label}</strong><small>${e.detail}</small></span>${icon("check")}</button>`).join("")}</div></div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status">Every cube works with both palettes. Your choices save automatically.</p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
+      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3>Display mode</h3><p>Follow this device, or pin the app to one mode.</p><div class="mode-options">${modes.map(([value, label, detail]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong><small>${detail}</small></button>`).join("")}</div></div><div class="appearance-section"><h3>Color theme</h3><p>Changes the app accents while keeping each display mode balanced.</p><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}"><i class="accent-swatch"></i><span>${label}</span>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><div><span>Cube preview</span><small>Model, surface and light</small></div><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong><span id="cube-model-detail">${model.detail}</span></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div><span class="cube-orbit-hint">Press either side for another cube · drag the middle to rotate · click for 2D</span></div><div class="cube-setting cube-color-setting"><div class="cube-color-head"><h3>Cube colors</h3><div class="cube-core-options" role="group" aria-label="Core color"><span class="cube-core-label">Core</span>${Object.entries(CUBE_CORES).map(([value, c]) => `<button class="cube-core-choice" data-cube-core="${value}" aria-pressed="${pref.cubeCore === value}" title="${c.label} core"><i style="background:${c.swatch}" aria-hidden="true"></i>${c.label}</button>`).join("")}</div></div><div class="cube-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, p]) => `<button class="cube-palette-choice" data-cube-palette="${value}" aria-pressed="${pref.cubePalette === value}"><span class="cube-color-swatches" aria-hidden="true">${["U", "D", "F", "B", "L", "R"].map(f => `<i style="background:${p.colors[f]}"></i>`).join("")}</span><strong>${p.label}</strong><small>${p.detail}</small></button>`).join("")}</div></div><div class="cube-setting cube-wear-setting"><label class="toggle-row"><input type="checkbox" data-control="cube-wear" ${pref.cubeWear ? "checked" : ""}><span><strong>Surface wear</strong>Fine reflective scratches and subtle handling haze. Turn off for factory-new plastic.</span></label></div><div class="cube-settings-row"><div class="cube-setting"><h3>Graphics quality</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="quality-value">${quality.label}</strong><small id="quality-detail">${quality.detail}</small></span>${icon("down")}</button><div class="quality-menu" role="listbox" aria-label="Graphics quality">${Object.entries(CUBE_QUALITY).map(([value, q]) => `<button type="button" class="quality-option" role="option" data-cube-quality="${value}" aria-selected="${pref.cubeQuality === value}"><span><strong>${q.label}</strong><small>${q.detail}</small></span>${icon("check")}</button>`).join("")}</div></div></div><div class="cube-setting"><h3>Environment</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="environment-value">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}</strong><small id="environment-detail">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].detail}</small></span>${icon("down")}</button><div class="quality-menu environment-menu" role="listbox" aria-label="Reflection environment">${Object.entries(CUBE_ENVIRONMENTS).map(([value, e]) => `<button type="button" class="quality-option" role="option" data-cube-environment="${value}" aria-selected="${pref.cubeEnvironment === value}"><span><strong>${e.label}</strong><small>${e.detail}</small></span>${icon("check")}</button>`).join("")}</div></div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status">Every cube works with both palettes. Your choices save automatically.</p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
       "appearance-dialog",
     );
     appearanceScene = new CubeScene($("#appearance-cube"), "x'");
@@ -3257,6 +3267,7 @@ ${rankCard(status)}
       cubePalette: next?.cubePalette ?? lightingState?.cubePalette ?? pref.cubePalette,
       cubeQuality: next?.cubeQuality ?? lightingState?.cubeQuality ?? pref.cubeQuality,
       cubeWear: next?.cubeWear ?? lightingState?.cubeWear ?? pref.cubeWear,
+      cubeCore: next?.cubeCore ?? lightingState?.cubeCore ?? pref.cubeCore,
       values: Object.fromEntries(Object.keys(LIGHTING_CONTROLS).map(key => [key, tuning[key]])),
     };
     navigate("lighting");
@@ -3345,6 +3356,7 @@ ${rankCard(status)}
     $$("[data-cube-quality]").forEach(el => el.setAttribute("aria-selected", String(el.dataset.cubeQuality === pref.cubeQuality)));
     $$("[data-cube-environment]").forEach(el => el.setAttribute("aria-selected", String(el.dataset.cubeEnvironment === pref.cubeEnvironment)));
     if ($('[data-control="cube-wear"]')) $('[data-control="cube-wear"]').checked = pref.cubeWear;
+    $$("[data-cube-core]").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.cubeCore === pref.cubeCore)));
     $$("[data-cube-dot]").forEach(el => el.classList.toggle("on", el.dataset.cubeDot === pref.cubeFinish));
     if ($("#cube-model-name")) {
       $("#cube-model-name").textContent = CUBE_MODELS[pref.cubeFinish].label;
@@ -3353,7 +3365,7 @@ ${rankCard(status)}
       $("#quality-detail").textContent = CUBE_QUALITY[pref.cubeQuality].detail;
       if ($("#environment-value")) $("#environment-value").textContent = CUBE_ENVIRONMENTS[pref.cubeEnvironment].label;
       if ($("#environment-detail")) $("#environment-detail").textContent = CUBE_ENVIRONMENTS[pref.cubeEnvironment].detail;
-      $("#cube-finish-status").textContent = `${CUBE_MODELS[pref.cubeFinish].label} · ${CUBE_PALETTES[pref.cubePalette].label} · ${pref.cubeWear ? "Worn" : "Factory new"} · ${CUBE_QUALITY[pref.cubeQuality].label} quality · ${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}. Saved for every cube preview.`;
+      $("#cube-finish-status").textContent = `${CUBE_MODELS[pref.cubeFinish].label} · ${CUBE_PALETTES[pref.cubePalette].label} · ${pref.cubeWear ? "Worn" : "Factory new"} · ${CUBE_CORES[pref.cubeCore].label} core · ${CUBE_QUALITY[pref.cubeQuality].label} quality · ${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}. Saved for every cube preview.`;
     }
     scene?.setAppearance();
     drawerScene?.setAppearance();
@@ -3616,8 +3628,9 @@ ${rankCard(status)}
       stepCubeModel(Number(b.dataset.cubeStep));
       return;
     }
-    if (b.dataset.cubePalette || b.dataset.cubeFinish || b.dataset.cubeQuality || b.dataset.cubeEnvironment) {
+    if (b.dataset.cubePalette || b.dataset.cubeFinish || b.dataset.cubeQuality || b.dataset.cubeEnvironment || b.dataset.cubeCore) {
       if (Object.hasOwn(CUBE_PALETTES, b.dataset.cubePalette ?? "")) pref.cubePalette = b.dataset.cubePalette;
+      if (Object.hasOwn(CUBE_CORES, b.dataset.cubeCore ?? "")) pref.cubeCore = b.dataset.cubeCore;
       if (Object.hasOwn(CUBE_MODELS, b.dataset.cubeFinish ?? "")) pref.cubeFinish = b.dataset.cubeFinish;
       if (Object.hasOwn(CUBE_QUALITY, b.dataset.cubeQuality ?? "")) pref.cubeQuality = b.dataset.cubeQuality;
       if (Object.hasOwn(CUBE_ENVIRONMENTS, b.dataset.cubeEnvironment ?? "")) pref.cubeEnvironment = b.dataset.cubeEnvironment;

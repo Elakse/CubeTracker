@@ -47,18 +47,18 @@
       "rim": 0.72,
       "fill": 1.1,
       "env": 0.22,
-      "gloss": 0.88,
+      "gloss": 0.85,
       "glossRough": 0.07
     },
     "speedcube": {
-      "exposure": 0.44,
-      "hemi": 0.55,
-      "key": 1.4,
+      "exposure": 0.49,
+      "hemi": 0.75,
+      "key": 0.72,
       "rim": 0.68,
       "fill": 0.7,
       "env": 0.76,
-      "gloss": 0.49,
-      "glossRough": 0.5
+      "gloss": 0.12,
+      "glossRough": 0.195
     },
     "tiles": {
       "exposure": 0.55,
@@ -91,6 +91,16 @@
       "env": 1.09,
       "gloss": 0.81,
       "glossRough": 0.235
+    },
+    "speedcube": {
+      "exposure": 0.7812,
+      "hemi": 0.45,
+      "key": 1.53,
+      "rim": 0.42,
+      "fill": 0.68,
+      "env": 0.408,
+      "gloss": 0.29,
+      "glossRough": 0.22
     }
   },
   "clinic": {
