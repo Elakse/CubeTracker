@@ -21,7 +21,7 @@ baked into the renderer's targets, materials and geometry.
 | Balanced | up to 2 | yes | no | no |
 | High | up to 2 | yes | yes | no |
 | Ultra | up to 2 | yes | yes | yes |
-| Cinematic | up to 2 | yes, 2048 | yes | yes, plus the lens |
+| Cinematic | up to 2 | yes, adaptive 1024/2048 | yes | yes, plus the lens |
 
 First run guesses rather than assumes: a coarse pointer or four cores or fewer
 gets **Low**, everything else gets **Balanced**. Nobody is opted into High,
@@ -295,20 +295,22 @@ Cinematic uses a linear HDR scene, optical diffusion, restrained defocus, a subt
 warm-highlight/cool-shadow grade and fine luminance grain. Ultra retains its
 existing shader branch. All photographic parameters live in `LENS`.
 
-The September review replaced the 16 randomly rotated defocus samples with 48
-fixed golden-angle samples and a soft aperture weight. Blur is capped at three
-buffer pixels to keep tiny glossy reflections continuous without temporal
-accumulation. Depth rejection limits foreground leakage onto rear surfaces.
+The September review replaced the 16 randomly rotated defocus samples with a
+fixed golden-angle aperture and a soft aperture weight. It uses 12 samples below
+one buffer pixel, 24 below two, and the full 48 only for the widest blur. Blur is
+capped at three buffer pixels to keep tiny glossy reflections continuous without
+temporal accumulation. Depth rejection limits foreground leakage onto rear surfaces.
 This remains a compact screen-space approximation: silhouettes do not scatter
 outward as a full multilayer depth-of-field solution would.
 
-The 48-sample aperture now runs only where the circle of confusion exceeds a
-quarter buffer pixel. Transparent and effectively sharp pixels use the centre
-sample, and transparent pixels skip the 20-sample occlusion kernel while still
-retaining halation. During layer motion the lens renders at up to 1.5x density,
-4x MSAA and a 1024 shadow; the completed still returns to 2x density, 8x MSAA
-and its 2048 shadow. Motion hides that temporary reduction while the final
-photograph remains unchanged.
+The aperture gather runs only where the circle of confusion exceeds a quarter
+buffer pixel. Transparent and effectively sharp pixels use the centre sample,
+and transparent pixels skip the 20-sample occlusion kernel while still retaining
+halation. During layer motion the lens renders at up to 1.5x density, 4x MSAA and
+a 1024 shadow. A completed still returns to 2x density and 8x MSAA while the
+target stays under two million pixels, then uses 4x; compact stills use a 1024
+shadow and larger ones 2048. Motion hides the temporary reduction while the
+final photograph remains visually unchanged.
 
 Lateral aberration is reduced to `.0015` and restricted to fully covered pixels;
 it fades with defocus. The cinematic composite now uses premultiplied-alpha
@@ -316,9 +318,12 @@ blending, matching its output and avoiding double attenuation at transparent
 edges. The occlusion kernel is fixed in this mode to reduce spatial noise.
 
 Highlight diffusion uses luminance rather than the brightest colour channel,
-with an HDR threshold of `1.1`, a soft knee of `.45`, and strength `.18`.
+with an HDR threshold of `1.1`, a soft knee of `.45`, and strength `.10`.
 This keeps saturated plastic from glowing simply because it is saturated.
 Diffusion is tinted slightly warm and composited before ACES and sRGB encoding.
+Its separable Gaussian retains the same contiguous 25 coefficients but pairs
+adjacent weights through linear filtering, reducing each axis from 25 texture
+reads to 13 without stretching or punching gaps into small reflections.
 Barrel distortion and a restrained split tone complete the lens treatment;
 fine, deterministic luminance grain fades in shadows and highlights.
 
@@ -333,7 +338,7 @@ frame, scaled by `LENS.shutter` (`.55`, near the 180-degree cinema convention).
 The angle is measured rather than assumed, so a dropped frame lengthens the
 trail on its own and an eased turn blurs most where it is actually fastest.
 
-Twelve taps run backwards along the projected arc, offset per pixel to keep a
+Eight taps run backwards along the projected arc, offset per pixel to keep a
 long trail from reading as stacked copies of a cap. A pixel on the turning
 layer averages the whole swept path, empty taps included, so a leading edge
 loses coverage instead of staying cut out. Every other pixel takes only the
@@ -351,8 +356,10 @@ pixel is one too many, and it makes the moving frames cheaper rather than
 dearer. `tests/motion-blur.cjs` renders a mid-turn frame with and without a
 preceding step and asserts they differ, with no shader errors.
 
-The scene uses 8x MSAA where supported and 2048 shadow maps. It renders only
-on interaction. The UV GPU review covers four orientations, partial turns,
+The scene uses adaptive 4x/8x MSAA where supported and 1024/2048 shadow maps.
+The shadow is invalidated only when geometry or its transform changes, so a
+palette, exposure or environment redraw reuses it. The scene renders only on
+interaction. The UV GPU review covers four orientations, partial turns,
 reversal, disposal, and deterministic redraws at 240 and 640 pixels over light
 and dark backgrounds. Run with `UV_QUALITY=cinematic`.
 

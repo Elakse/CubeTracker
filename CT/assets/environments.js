@@ -69,6 +69,16 @@
       "env": 0.68,
       "gloss": 0.31,
       "glossRough": 0.03
+    },
+    "stickers": {
+      "exposure": 0.5,
+      "hemi": 0.7,
+      "key": 1.14,
+      "rim": 1.05,
+      "fill": 0.83,
+      "env": 0.765,
+      "gloss": 0.32,
+      "glossRough": 0.1955
     }
   },
   "studio": {

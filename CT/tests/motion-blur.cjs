@@ -30,12 +30,13 @@ const server = http.createServer((req, res) => {
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.evaluate(async () => {
       const { RealisticCube } = await import('/assets/cube-realistic.js');
-      window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, 'uv', 'cinematic', 'studio');
-      cube.setPalette({ U: '#fafcff', R: '#eb3046', F: '#16bd6b', D: '#ffdb19', L: '#ff821c', B: '#2474ef' });
+      window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, 'uv', 'cinematic', 'studioSmall08', false, 'black');
+      cube.setPalette(Object.fromEntries(Object.entries(CT.FACES).map(([face, value]) => [face, value.color])));
       cube.draw(new CT.Cube().apply("x'").stickers);
       cube.orbit(-15, -20, 1);
     });
     await page.locator('canvas[data-logo="loaded"]').waitFor();
+    await page.waitForFunction(() => Boolean(cube.scene.environment));
     // Mid-turn, twice: once as a still (no previous frame) and once with the
     // step a 60fps playback would have taken.
     const frame = async (label, previous) => {

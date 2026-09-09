@@ -30,19 +30,22 @@ const server = http.createServer((req, res) => {
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const before = process.env.UV_BEFORE === '1';
     const quality = process.env.UV_QUALITY || 'balanced';
-    await page.evaluate(async ({ before, quality }) => {
+    const environment = process.env.UV_ENVIRONMENT || 'studioSmall08';
+    const wear = process.env.UV_WEAR === '1';
+    await page.evaluate(async ({ before, quality, environment, wear }) => {
       const { RealisticCube } = await import(before ? '/assets/cube-uv-before.js' : '/assets/cube-realistic.js');
-      window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, 'uv', quality);
-      cube.setPalette({ U: '#fafcff', R: '#eb3046', F: '#16bd6b', D: '#ffdb19', L: '#ff821c', B: '#2474ef' });
+      window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, 'uv', quality, environment, wear, 'black');
+      cube.setPalette(Object.fromEntries(Object.entries(CT.FACES).map(([face, value]) => [face, value.color])));
       cube.draw(new CT.Cube().apply("x'").stickers);
       cube.orbit(-25, -42, 1);
-    }, { before, quality });
+    }, { before, quality, environment, wear });
     await page.locator('canvas[data-logo="loaded"]').waitFor();
-    if (!before && ['high', 'ultra', 'cinematic'].includes(quality)) {
+    if (!before && wear) {
       await page.locator('canvas[data-wear="loaded"]').waitFor();
       await page.locator('canvas[data-wear-roughness="loaded"]').waitFor();
-      await page.locator('canvas[data-wear-color="loaded"]').waitFor();
+      await page.locator('canvas[data-wear-clearcoat="loaded"]').waitFor();
     }
+    if (!before) await page.waitForFunction(() => Boolean(cube.scene.environment));
     if (!before) {
       const surface = await page.evaluate(() => {
         const geometries = [...new Set(cube.faces.map(face => face.geometry))];

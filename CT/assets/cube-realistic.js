@@ -233,6 +233,16 @@ const LENS = {
   shutter: .55,
 };
 
+// Spend samples where the displayed image can retain them. Eight samples at a
+// 2x canvas are useful on the normal preview, but become a large transient VRAM
+// allocation in the full-screen studio without adding visible edge coverage.
+// The shadow follows the same rule: a 2048 map cannot resolve more detail than
+// a compact target can show after defocus and the VSM filter.
+const CINEMATIC_BUDGET = {
+  maxEightSamplePixels: 2_000_000,
+  compactShadowEdge: 900,
+};
+
 // The cube's internals, seen through the gaps and while a layer is mid-turn.
 // Colour is the whole choice: every option is the same moulded plastic, so the
 // finish is written once here instead of once per colour. White is deliberately
@@ -739,6 +749,11 @@ export class RealisticCube {
       this.renderer.toneMappingExposure = L.exposure;
       this.renderer.shadowMap.enabled = settings.shadows;
       this.renderer.shadowMap.type = T.VSMShadowMap;
+      // Shadows depend on the cube transform, not on palette, exposure or an
+      // environment arriving. Those redraws are common in the lighting studio
+      // and used to rebuild and blur the complete VSM map every time.
+      this.renderer.shadowMap.autoUpdate = false;
+      this.renderer.shadowMap.needsUpdate = settings.shadows;
       this.canvas = this.renderer.domElement;
       this.canvas.className = "cube-studio-canvas";
       this.canvas.dataset.model = model;
@@ -1136,6 +1151,24 @@ export class RealisticCube {
           return mix(pow(c, vec3(0.41666)) * 1.055 - vec3(0.055), c * 12.92, vec3(lessThanEqual(c, vec3(0.0031308))));
         }
 
+        #ifdef CAMERA
+        void defocusTap(vec2 uv, vec3 origin, float spread, float index, float tapCount,
+          inout vec4 gathered, inout float totalWeight) {
+          float t = index / tapCount;
+          float spin = index * 2.39996323;
+          vec2 probe = uv + vec2(cos(spin), sin(spin)) * sqrt(t) * spread / resolution;
+          vec4 sampleColour = texture2D(colorBuffer, probe);
+          float sampleDepth = texture2D(depthBuffer, probe).x;
+          float sampleZ = -viewPosition(probe, sampleDepth).z;
+          // Do not smear a nearer, in-focus cap over a defocused rear cap.
+          float edgeWeight = mix(1.0, smoothstep(-0.3, 0.0, sampleZ + 0.03 + origin.z),
+            (1.0 - step(0.9999, sampleDepth)));
+          float weight = exp(-2.0 * t) * edgeWeight;
+          gathered += sampleColour * weight;
+          totalWeight += weight;
+        }
+        #endif
+
         void main() {
           #ifdef CAMERA
             // A lens does not map the world onto a plane. The sample point is
@@ -1167,7 +1200,7 @@ export class RealisticCube {
             // Read the centre and halo before deciding how much lens work this
             // pixel needs. Most of the transparent stage has neither, and most
             // camera-facing caps are effectively in focus; neither case should
-            // pay for a 48-sample aperture gather.
+            // pay for an aperture gather.
             vec4 centreSample = texture2D(colorBuffer, uv);
             vec4 halo = texture2D(bloomBuffer, uv);
             float glow = clamp(max(halo.a, max(halo.r, max(halo.g, halo.b))) * bloom, 0.0, 1.0);
@@ -1278,19 +1311,19 @@ export class RealisticCube {
             if (surface > 0.5 && spread > 0.25) {
               gathered = vec4(0.0);
               float totalWeight = 0.0;
-              for (int i = 0; i < 48; i++) {
-                float t = float(i) / 48.0;
-                float spin = float(i) * 2.39996323;
-                vec2 probe = uv + vec2(cos(spin), sin(spin)) * sqrt(t) * spread / resolution;
-                vec4 mid = texture2D(colorBuffer, probe);
-                float sampleDepth = texture2D(depthBuffer, probe).x;
-                float sampleZ = -viewPosition(probe, sampleDepth).z;
-                // Do not smear a nearer, in-focus cap over a defocused rear cap.
-                float edgeWeight = mix(1.0, smoothstep(-0.3, 0.0, sampleZ + 0.03 + origin.z),
-                  (1.0 - step(0.9999, sampleDepth)) * surface);
-                float weight = exp(-2.0 * t) * edgeWeight;
-                gathered += mid * weight;
-                totalWeight += weight;
+              // A sub-pixel circle was paying for the same 48 samples as the
+              // widest blur even though bilinear filtering collapses most of
+              // them onto the same texels. Keep the full aperture at the rear
+              // face and scale down only where fewer samples are indistinguishable.
+              if (spread < 1.0) {
+                for (int i = 0; i < 12; i++)
+                  defocusTap(uv, origin, spread, float(i), 12.0, gathered, totalWeight);
+              } else if (spread < 2.0) {
+                for (int i = 0; i < 24; i++)
+                  defocusTap(uv, origin, spread, float(i), 24.0, gathered, totalWeight);
+              } else {
+                for (int i = 0; i < 48; i++)
+                  defocusTap(uv, origin, spread, float(i), 48.0, gathered, totalWeight);
               }
               gathered /= max(totalWeight, 0.001);
             }
@@ -1389,7 +1422,13 @@ export class RealisticCube {
     // ping-ponged between two targets. Three extra draws, all at a quarter of
     // the pixels, and the last one lands in `bloomB` where the composite
     // reads it.
-    const options = { type: T.HalfFloatType, depthBuffer: false, stencilBuffer: false };
+    const options = {
+      type: T.HalfFloatType,
+      minFilter: T.LinearFilter,
+      magFilter: T.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    };
     this.bloomA = new T.WebGLRenderTarget(1, 1, options);
     this.bloomB = new T.WebGLRenderTarget(1, 1, options);
     const vertexShader = `
@@ -1453,17 +1492,22 @@ export class RealisticCube {
         uniform vec2 direction;
         varying vec2 vUv;
         void main() {
-          // Contiguous texels are essential for HDR window reflections. The
-          // old bilinear-pair kernel was stretched by 1.9, leaving holes and
-          // reproducing small highlights as separate bands along each axis.
-          vec2 step = direction * texel;
-          vec4 sum = vec4(0.0);
-          float total = 0.0;
-          for (int i = -12; i <= 12; i++) {
-            float x = float(i);
-            float weight = exp(-0.5 * x * x / 16.0);
-            sum += texture2D(source, vUv + step * x) * weight;
-            total += weight;
+          // Pair adjacent Gaussian coefficients through linear filtering. The
+          // fractional offset is their weighted centroid, so this is the same
+          // contiguous 25-coefficient kernel in 13 texture reads, with no gaps
+          // or stretched highlights.
+          vec2 axisStep = direction * texel;
+          vec4 sum = texture2D(source, vUv);
+          float total = 1.0;
+          for (int pair = 0; pair < 6; pair++) {
+            float x = 1.0 + float(pair) * 2.0;
+            float first = exp(-0.5 * x * x / 16.0);
+            float second = exp(-0.5 * (x + 1.0) * (x + 1.0) / 16.0);
+            float combined = first + second;
+            float offset = (x * first + (x + 1.0) * second) / combined;
+            vec2 reach = axisStep * offset;
+            sum += (texture2D(source, vUv + reach) + texture2D(source, vUv - reach)) * combined;
+            total += 2.0 * combined;
           }
           sum /= total;
           gl_FragColor = sum;
@@ -1712,6 +1756,7 @@ export class RealisticCube {
       }
     });
     this.setMotion(spec, fraction);
+    this.invalidateShadow();
     this.render();
     // The trail belongs to this frame only. A resize or an environment landing
     // re-renders the same pose, and it must come back as a still.
@@ -1769,23 +1814,44 @@ export class RealisticCube {
     if (this.disposed) return;
     this.root.rotation.set(T.MathUtils.degToRad(-pitch - 25), T.MathUtils.degToRad(yaw), 0, "XYZ");
     this.root.scale.setScalar(zoom);
+    this.invalidateShadow();
     this.render();
   }
-  // Cinematic keeps its full-resolution, 8x-sampled still frame. While pieces
-  // are visibly moving, motion masks the small difference from 1.5x density,
-  // 4x coverage and a 1024 shadow, cutting the work that can monopolise the GPU.
-  // The full-quality targets are restored once per playback, not once per move.
-  setAnimationActive(active) {
-    if (!this.settings.camera || this.disposed || this.animationActive === active) return;
-    this.animationActive = active;
-    const ratio = active ? Math.min(this.restPixelRatio, 1.5) : this.restPixelRatio;
-    const samples = active ? 4 : 8;
-    const shadowSize = active ? 1024 : 2048;
-    const shadowSamples = active ? 12 : 20;
+  invalidateShadow() {
+    if (this.settings.shadows) this.renderer.shadowMap.needsUpdate = true;
+  }
+  frameBudget(width, height) {
+    const speedcube = SCULPTED(this.model);
+    let ratio = this.restPixelRatio,
+      samples = this.settings.camera ? 8 : this.settings.post ? 4 : 0,
+      shadowSize = this.settings.camera ? 2048 : speedcube ? 1024 : 512,
+      shadowSamples = this.settings.camera ? 20 : 12;
+
+    if (this.interactionActive) {
+      ratio = Math.min(this.restPixelRatio, 1);
+      samples = this.target ? 1 : 0;
+      shadowSize = 512;
+      shadowSamples = 6;
+    } else if (this.settings.camera && this.animationActive) {
+      ratio = Math.min(this.restPixelRatio, 1.5);
+      samples = 4;
+      shadowSize = 1024;
+      shadowSamples = 12;
+    } else if (this.settings.camera) {
+      const bufferPixels = width * height * ratio * ratio;
+      const bufferEdge = Math.min(width, height) * ratio;
+      samples = bufferPixels <= CINEMATIC_BUDGET.maxEightSamplePixels ? 8 : 4;
+      shadowSize = bufferEdge <= CINEMATIC_BUDGET.compactShadowEdge ? 1024 : 2048;
+      shadowSamples = shadowSize === 2048 ? 20 : 12;
+    }
+    return { ratio, samples, shadowSize, shadowSamples };
+  }
+  applyFrameBudget(width, height) {
+    const { ratio, samples, shadowSize, shadowSamples } = this.frameBudget(width, height);
     if (this.target && this.target.samples !== samples) {
       this.target.samples = samples;
       // Sample count is framebuffer state; force Three to allocate the target
-      // again even on a 1x-DPR display where its dimensions do not change.
+      // again even when its dimensions happen not to change.
       this.target.dispose();
     }
     const shadow = this.keyLight?.shadow;
@@ -1794,9 +1860,21 @@ export class RealisticCube {
       shadow.mapPass?.dispose();
       shadow.map = shadow.mapPass = null;
       shadow.mapSize.set(shadowSize, shadowSize);
+      this.invalidateShadow();
     }
-    if (shadow) shadow.blurSamples = shadowSamples;
+    if (shadow && shadow.blurSamples !== shadowSamples) {
+      shadow.blurSamples = shadowSamples;
+      this.invalidateShadow();
+    }
     this.renderer.setPixelRatio(ratio);
+  }
+  // Cinematic keeps its full-density still frame, with 8x coverage on normal
+  // previews and 4x on targets above the sample budget. While pieces are visibly
+  // moving, motion masks the small difference from 1.5x density, 4x coverage and
+  // a 1024 shadow. The still budget is restored once per playback, not per move.
+  setAnimationActive(active) {
+    if (!this.settings.camera || this.disposed || this.animationActive === active) return;
+    this.animationActive = active;
     this.resize();
   }
   // A full-screen calibration canvas can contain several times as many pixels
@@ -1806,30 +1884,13 @@ export class RealisticCube {
   setInteractionActive(active) {
     if (this.disposed || this.interactionActive === active) return;
     this.interactionActive = active;
-    const speedcube = SCULPTED(this.model),
-      restSamples = this.settings.camera ? 8 : this.settings.post ? 4 : 0,
-      samples = active && this.target ? 1 : restSamples,
-      shadowSize = active ? 512 : this.settings.camera ? 2048 : speedcube ? 1024 : 512,
-      shadowSamples = active ? 6 : this.settings.camera ? 20 : 12;
-    if (this.target && this.target.samples !== samples) {
-      this.target.samples = samples;
-      this.target.dispose();
-    }
-    const shadow = this.keyLight?.shadow;
-    if (shadow && shadow.mapSize.x !== shadowSize) {
-      shadow.map?.dispose();
-      shadow.mapPass?.dispose();
-      shadow.map = shadow.mapPass = null;
-      shadow.mapSize.set(shadowSize, shadowSize);
-    }
-    if (shadow) shadow.blurSamples = shadowSamples;
-    this.renderer.setPixelRatio(active ? Math.min(this.restPixelRatio, 1) : this.restPixelRatio);
     this.resize();
   }
   resize() {
     if (this.disposed || !this.stage) return;
     const width = this.stage.clientWidth, height = this.stage.clientHeight;
     if (!width || !height) return;
+    this.applyFrameBudget(width, height);
     this.renderer.setSize(width, height, false);
     if (this.target) {
       const ratio = this.renderer.getPixelRatio();

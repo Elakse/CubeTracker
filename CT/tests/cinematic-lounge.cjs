@@ -10,7 +10,7 @@ const server = http.createServer((req, res) => {
   if (req.url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
   if (req.url === '/') {
     res.setHeader('Content-Type', 'text/html');
-    res.end('<style>body{margin:0;background:#fff}#stage{width:640px;height:640px}canvas{display:block;width:100%;height:100%}</style><div id="stage"></div><script src="/assets/core.js"></script>');
+    res.end('<style>body{margin:0;background:#fff}#stage{width:640px;height:640px}canvas{display:block;width:100%;height:100%}</style><div id="stage"></div><script src="/assets/core.js"></script><script src="/assets/environments.js"></script>');
     return;
   }
   const url = req.url.split('?')[0];
@@ -32,13 +32,21 @@ const server = http.createServer((req, res) => {
     const quality = 'cinematic';
     await page.evaluate(async ({ before, quality }) => {
       const { RealisticCube } = await import(before ? '/assets/cube-uv-before.js' : '/assets/cube-realistic.js');
-      window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, 'uv', quality, 'ferndale04');
-      cube.setPalette({ U: '#fafcff', R: '#eb3046', F: '#16bd6b', D: '#ffdb19', L: '#ff821c', B: '#2474ef' });
+      window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, 'uv', quality, 'studioSmall08', false, 'black');
+      cube.setPalette(Object.fromEntries(Object.entries(CT.FACES).map(([face, value]) => [face, value.color])));
       cube.draw(new CT.Cube().apply("x'").stickers);
       cube.orbit(-25, -42, 1);
     }, { before, quality });
     await page.locator('canvas[data-logo="loaded"]').waitFor();
     await page.waitForFunction(() => !!cube.scene.environment);
+    await page.evaluate(() => {
+      const uniforms = cube.postMaterial.uniforms;
+      window.productionLens = {
+        bloom: uniforms.bloom.value,
+        bokeh: uniforms.bokeh.value,
+        occlusion: uniforms.occlusion.value,
+      };
+    });
     await page.evaluate(() => {
       document.body.style.background = '#0c100d';
       document.querySelector('#stage').style.cssText = 'width:274px;height:265px';
@@ -49,12 +57,12 @@ const server = http.createServer((req, res) => {
     for (const effect of ['all', 'no-bloom', 'no-dof', 'no-ao']) {
       await page.evaluate(effect => {
         const u = cube.postMaterial.uniforms;
-        u.bloom.value = effect === 'no-bloom' ? 0 : .18;
-        u.bokeh.value = effect === 'no-dof' ? 0 : .006;
-        u.occlusion.value = effect === 'no-ao' ? 0 : 1.5;
+        u.bloom.value = effect === 'no-bloom' ? 0 : productionLens.bloom;
+        u.bokeh.value = effect === 'no-dof' ? 0 : productionLens.bokeh;
+        u.occlusion.value = effect === 'no-ao' ? 0 : productionLens.occlusion;
         cube.render();
       }, effect);
-      await page.locator('#stage').screenshot({ path: path.join(output, `ferndale-${effect}.png`) });
+      await page.locator('#stage').screenshot({ path: path.join(output, `studio-small-08-${effect}.png`) });
     }
     // An isolated HDR impulse must become one smooth lobe, never replicas.
     const profile = await page.evaluate(async () => {
@@ -80,7 +88,7 @@ const server = http.createServer((req, res) => {
       assert.ok(Math.abs(profile[i] - profile[64 - i]) <= 2, 'Bloom is symmetric');
     }
     assert.deepEqual(errors, []);
-    console.log('Downloaded HDR effect isolation passed');
+    console.log('Studio small 08 Cinematic effect isolation passed');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
