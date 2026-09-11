@@ -7,7 +7,7 @@
 grain, IOR and wear. OG combines the existing Speedcube moulds with the vinyl
 finish, sharing state, animation, palette, quality, environments and pooling.
 
-Each face has an exposed ABS holder under a separate .0024-unit vinyl film.
+Each face has an exposed ABS holder under a separate .0072-unit vinyl film.
 Nine shared holder geometries reuse the mitered skirts, rounded shoulders and
 center transition. Glossy ABS (.23 roughness, .42 clearcoat) provides narrow rim
 highlights; inset vinyl has softer reflections. Holders follow the selected
@@ -125,7 +125,13 @@ about keeping that in the test suite.
 Optional, independent of quality, behind `pref.cubeWear`. Four baked maps in
 `assets/wear/`, produced by `tools/bake-wear-textures.py` and loaded only when
 wear is on. The fourth is an 8×8 sticker-damage atlas: on the Stickers model its
-alpha cutout removes the thin face mesh and reveals the modeled body below.
+alpha cutout removes the thin face mesh and reveals the modeled body below. The
+normal and roughness maps are wired into the plastic as well — all 26 bodies,
+the core sphere and the exposed ABS holder faces under the vinyl — at the
+matte-plastic slope (1.30), so the interior is as handled as the caps when a
+layer turns, a seam opens or a sticker chips. Every material divides the clean
+floor out of the roughness map, and all of them lose the wear layer together if
+the textures fail to load.
 
 Sticker wear uses 54 deterministic, edge-connected outlines at every quality.
 Each 256px atlas tile has a transparent gutter; alpha-to-coverage smooths the

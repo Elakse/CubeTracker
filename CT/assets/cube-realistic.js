@@ -327,6 +327,10 @@ function loadEnvironment(name) {
 // an identical renderer. A slot keeps its cube across scene rebuilds and only
 // rebuilds when the model or the quality actually changes.
 const STUDIO = new Map();
+// Appearance keeps at most the five realistic models for one configuration.
+// Parked canvases retain compiled shaders; all are freed with the dialog.
+const APPEARANCE_MODELS = new Map();
+let appearanceConfiguration = "";
 
 // Build the shared maps ahead of the first cube. The app calls this while the
 // browser is idle so the first spawn does not pay for them.
@@ -345,18 +349,45 @@ export function warmCube(model = "tiles", quality = "balanced", environment = "s
 // Hand back the slot's cube, adopting it into `stage` when it can be reused and
 // building a new one when it cannot. Environment is part of the identity: a
 // slot built for the studio cannot become a different photographic cube by adoption.
-export function acquireCube(slot, stage, onUnavailable, model, quality, environment = "studio", wear = false, core = "black", onReady) {
+export function acquireCube(slot, stage, onUnavailable, model, quality, environment = "studio", wear = false, core = "black", onReady, options = {}) {
+  if (slot === "appearance-cube") {
+    const configuration = [quality, environment, wear, CORE(core)].join("|");
+    if (configuration !== appearanceConfiguration) {
+      discardCube(slot);
+      appearanceConfiguration = configuration;
+    }
+    const previous = STUDIO.get(slot);
+    if (previous && previous.model !== model) previous.park();
+    let cube = APPEARANCE_MODELS.get(model);
+    if (!cube || cube.disposed) {
+      cube = new RealisticCube(stage, onUnavailable, model, quality, environment, wear, core, options);
+      cube.onReady = onReady;
+      cube.slot = slot;
+      APPEARANCE_MODELS.set(model, cube);
+    } else cube.adopt(stage, onUnavailable, onReady);
+    STUDIO.set(slot, cube);
+    return cube;
+  }
   const live = STUDIO.get(slot);
   if (live && !live.disposed && live.model === model && live.quality === quality && live.environment === environment && live.wear === wear && live.core === CORE(core)) {
     live.adopt(stage, onUnavailable, onReady);
     return live;
   }
   live?.destroy();
-  const cube = new RealisticCube(stage, onUnavailable, model, quality, environment, wear, core);
+  const cube = new RealisticCube(stage, onUnavailable, model, quality, environment, wear, core, options);
   cube.onReady = onReady;
   cube.slot = slot;
   STUDIO.set(slot, cube);
   return cube;
+}
+
+// The Trainer's case cards share one cube. It renders each case to a still on a
+// hidden stage, and a card being dragged borrows its live canvas until release,
+// so dozens of cards cost one WebGL context instead of one each. It is pinned to
+// Low quality and the studio room: at card size the higher tiers add nothing the
+// eye can resolve, and the studio keeps the first frame synchronous.
+export function acquirePreviewCube(slot, stage, onUnavailable, model, wear = false, core = "black") {
+  return acquireCube(slot, stage, onUnavailable, model, "low", "studio", wear, core, undefined, { preserveDrawingBuffer: true });
 }
 
 // Park the slot's cube: it leaves the DOM but keeps its context, so the next
@@ -368,6 +399,11 @@ export function releaseCube(slot) {
 
 // Give the slot up for good — for a cube whose mount disappears with its dialog.
 export function discardCube(slot) {
+  if (slot === "appearance-cube") {
+    for (const cube of APPEARANCE_MODELS.values()) cube.destroy();
+    APPEARANCE_MODELS.clear();
+    appearanceConfiguration = "";
+  }
   STUDIO.get(slot)?.destroy();
 }
 
@@ -530,8 +566,9 @@ function softboxMap(size = 128) {
   return texture;
 }
 
-const VINYL_PROFILE = [[.435, .065, 0], [.437, .067, .0012], [.435, .066, .0024], [.32, .06, .0024], [.12, .04, .0024]];
-const OG_VINYL_PROFILE = [[.400, .044, .0206], [.402, .046, .0218], [.400, .044, .023], [.30, .055, .023], [.12, .04, .023]];
+const VINYL_PROFILE = [[.399, .0618, 0], [.4009, .0627, .0036], [.399, .0618, .0072], [.38, .057, .0072], [.304, .057, .0072], [.114, .038, .0072]];
+const VINYL_ATLAS_PROFILE = [[.435, .065], [.437, .067], [.435, .066], [.40, .06], [.32, .06], [.12, .04]];
+const OG_VINYL_PROFILE = [[.400, .044, .0206], [.402, .046, .0242], [.400, .044, .0278], [.38, .05, .0278], [.30, .055, .0278], [.12, .04, .0278]];
 
 function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKERED(model) ? "sticker" : "cap") {
   const film = layer === "sticker", shapedFilm = film && SCULPTED(model);
@@ -589,7 +626,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
   // film outline. Tears stay at the real edge of D-shaped and circular stickers.
   // Scratch UVs remain in physical face coordinates and are not stretched.
   const filmChipUv = (ring, i) => {
-    const [h, r] = VINYL_PROFILE[ring], corner = Math.floor(i / (steps + 1));
+    const [h, r] = VINYL_ATLAS_PROFILE[ring], corner = Math.floor(i / (steps + 1));
     const [sx, sy] = [[1,1],[-1,1],[-1,-1],[1,-1]][corner];
     const angle = (corner + i % (steps + 1) / steps) * Math.PI / 2;
     return chipUv(sx * (h - r) + r * Math.cos(angle), sy * (h - r) + r * Math.sin(angle));
@@ -676,7 +713,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
       radialIndices.push(a, b, a + count, b, b + count, a + count);
     }
     const radialCenter = radialPositions.length / 3;
-    const centerHeight = shapedFilm ? .023 : COATED(model) ? COATING_CENTER : .020;
+    const centerHeight = shapedFilm ? .0278 : COATED(model) ? COATING_CENTER : .020;
     radialPositions.push(0, 0, centerHeight); radialUvs.push(.5 + shift[0], .5 + shift[1]);
     if (film) radialChipUvs.push(...chipUv(0, 0));
     if (shaded) radialShades.push(tint[0], tint[1], tint[2]);
@@ -752,7 +789,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
     }
   }
   const center = positions.length / 3;
-  positions.push(0, 0, film ? shapedFilm ? .023 : .0024 : COATED(model) ? COATING_CENTER : SCULPTED(model) ? .020 : .090); uvs.push(.5 + shift[0], .5 + shift[1]); if (film) chipUvs.push(...chipUv(0, 0)); if (shaded) shades.push(tint[0], tint[1], tint[2]);
+  positions.push(0, 0, film ? shapedFilm ? .0278 : .0072 : COATED(model) ? COATING_CENTER : SCULPTED(model) ? .020 : .090); uvs.push(.5 + shift[0], .5 + shift[1]); if (film) chipUvs.push(...chipUv(0, 0)); if (shaded) shades.push(tint[0], tint[1], tint[2]);
   const last = (profiles.length - 1) * count;
   for (let i = 0; i < count; i++) indices.push(last + i, last + (i + 1) % count, center);
   const geometry = new T.BufferGeometry();
@@ -798,7 +835,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
 }
 
 export class RealisticCube {
-  constructor(stage, onUnavailable, model = "tiles", quality = "balanced", environment = "studio", wear = false, core = "black") {
+  constructor(stage, onUnavailable, model = "tiles", quality = "balanced", environment = "studio", wear = false, core = "black", options = {}) {
     this.stage = stage;
     this.model = model;
     this.wear = Boolean(wear);
@@ -821,7 +858,7 @@ export class RealisticCube {
     this.materials = [];
     // The post chain multisamples its own target, so the canvas must not pay
     // for antialiasing a second time.
-    this.renderer = new T.WebGLRenderer({ alpha: true, antialias: !settings.post, powerPreference: settings.post ? "high-performance" : "low-power" });
+    this.renderer = new T.WebGLRenderer({ alpha: true, antialias: !settings.post, powerPreference: settings.post ? "high-performance" : "low-power", preserveDrawingBuffer: options.preserveDrawingBuffer });
     try {
       this.restPixelRatio = Math.min(window.devicePixelRatio || 1, settings.pixelRatio);
       this.renderer.setPixelRatio(this.restPixelRatio);
@@ -867,22 +904,6 @@ export class RealisticCube {
       const speedcube = SCULPTED(model), coated = COATED(model), stickers = STICKERED(model);
       const finish = SURFACES[MODELS[model]?.surface] ?? SURFACES.tiles;
       this.coating = coated ? sharedMap("coating", () => coatingNormal()) : null;
-      // Recessed internals: one moulded plastic for every model, in the colour
-      // the user picked. Injection-moulded ABS, not a painted part, so it keeps
-      // a low clearcoat and a tight highlight rather than reading as rubber.
-      const core = CORE_FINISH[this.core];
-      const shell = this.material(new T.MeshPhysicalMaterial({ color: core.color, roughness: core.roughness, metalness: 0, clearcoat: core.clearcoat, clearcoatRoughness: core.clearcoatRoughness, envMapIntensity: core.env, bumpMap: this.grain, bumpScale: coated ? .0004 : .0008 }));
-      const body = this.geometry(new RoundedBoxGeometry(speedcube ? .91 : .972, speedcube ? .91 : .972, speedcube ? .91 : .972, 5, speedcube ? .15 : .105));
-      this.bodies = [];
-      for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
-        if (!x && !y && !z) continue;
-        const mesh = new T.Mesh(body, shell);
-        mesh.castShadow = mesh.receiveShadow = true;
-        this.root.add(mesh);
-        this.bodies.push({ mesh, p: [x, y, z] });
-      }
-      // The core becomes visible in the gaps while a layer turns.
-      this.root.add(new T.Mesh(this.geometry(new T.SphereGeometry(.73, 24, 16)), shell));
       // Wear is an explicit appearance choice, independent of graphics quality.
       // These are finished static maps; no normal composition happens at runtime.
       this.scratches = this.wear ? sharedMap("wear-normal", scratchNormalMap) : null;
@@ -893,6 +914,40 @@ export class RealisticCube {
       if (this.scratchRoughness) this.scratchRoughness.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.scratchClearcoat) this.scratchClearcoat.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.stickerDamage) this.stickerDamage.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      const worn = this.wear ? finish.wear : null;
+      const floor = this.wear ? WEAR_ROUGHNESS_FLOOR : 1;
+      // Recessed internals: one moulded plastic for every model, in the colour
+      // the user picked. Injection-moulded ABS, not a painted part, so it keeps
+      // a low clearcoat and a tight highlight rather than reading as rubber.
+      // Wear belongs here too: the body shows through the seams and under the
+      // sticker cutout, and a handled cube's plastic is scratched where it shows.
+      // The body is the same ABS whichever finish the caps carry, so its slope
+      // uses the matte-plastic calibration rather than the cap's own.
+      const core = CORE_FINISH[this.core];
+      const shell = this.shellMaterial = this.material(new T.MeshPhysicalMaterial({
+        color: core.color,
+        roughness: core.roughness / floor,
+        roughnessMap: this.scratchRoughness,
+        metalness: 0,
+        clearcoat: core.clearcoat,
+        clearcoatRoughness: this.scratchRoughness ? core.clearcoatRoughness / floor : core.clearcoatRoughness,
+        clearcoatRoughnessMap: this.scratchRoughness,
+        envMapIntensity: core.env,
+        ...(this.scratches
+          ? { normalMap: this.scratches, normalScale: new T.Vector2(WEAR.speedcube.normal, WEAR.speedcube.normal) }
+          : { bumpMap: this.grain, bumpScale: coated ? .0004 : .0008 }),
+      }));
+      const body = this.geometry(new RoundedBoxGeometry(speedcube ? .91 : .972, speedcube ? .91 : .972, speedcube ? .91 : .972, 5, speedcube ? .15 : .085));
+      this.bodies = [];
+      for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
+        if (!x && !y && !z) continue;
+        const mesh = new T.Mesh(body, shell);
+        mesh.castShadow = mesh.receiveShadow = true;
+        this.root.add(mesh);
+        this.bodies.push({ mesh, p: [x, y, z] });
+      }
+      // The core becomes visible in the gaps while a layer turns.
+      this.root.add(new T.Mesh(this.geometry(new T.SphereGeometry(.73, 24, 16)), shell));
       // At detail quality every cap gets its own geometry: the same moulded
       // shape, but its own texture offset and tint, so 54 caps stop being copies.
       // Stickers use the same molded outline for every cell, but wear needs to
@@ -915,12 +970,24 @@ export class RealisticCube {
       // The exposed ABS rim is a separate material and mesh from the vinyl.
       // Its outline, mitered sidewalls and circular center transition are the
       // original Speedcube mould. Children inherit the sticker's complete pose.
+      // It is also the face a sticker is laid on, so wear reaches it exactly as
+      // it reaches the caps: same maps, same floor divide, same fallback.
+      const holderBase = { roughness: .23, clearcoatRoughness: .12, bump: .0003 };
       const holderGeometries = SEPARATE_HOLDERS(model)
         ? Array.from({ length: 9 }, (_, cell) => this.geometry(faceGeometry("speedcube", cell))) : null;
       this.holderMaterial = holderGeometries ? this.material(new T.MeshPhysicalMaterial({
-        color: core.color, roughness: .23, metalness: 0, ior: 1.49,
-        clearcoat: .42, clearcoatRoughness: .12, envMapIntensity: core.env,
-        bumpMap: this.grain, bumpScale: .0003, vertexColors: true,
+        color: core.color,
+        roughness: this.scratchRoughness ? holderBase.roughness / floor : holderBase.roughness,
+        roughnessMap: this.scratchRoughness,
+        metalness: 0, ior: 1.49,
+        clearcoat: .42,
+        clearcoatRoughness: this.scratchRoughness ? holderBase.clearcoatRoughness / floor : holderBase.clearcoatRoughness,
+        clearcoatRoughnessMap: this.scratchRoughness,
+        envMapIntensity: core.env,
+        ...(this.scratches
+          ? { normalMap: this.scratches, normalScale: new T.Vector2(WEAR.speedcube.normal, WEAR.speedcube.normal) }
+          : { bumpMap: this.grain, bumpScale: holderBase.bump }),
+        vertexColors: true,
       })) : null;
       this.holders = [];
       const faceGeometries = Array.from({ length: spread }, (_, i) => this.geometry(faceGeometry(model, variants[i].cell ?? i % cells, variants[i])));
@@ -933,8 +1000,6 @@ export class RealisticCube {
       // Strength and roughness come from the rig like every other model's; only
       // the maps are the coat's own. Spreading a second clearcoat literal here
       // is what let the table's gloss entry for this model sit inert.
-      const worn = this.wear ? finish.wear : null;
-      const floor = this.wear ? WEAR_ROUGHNESS_FLOOR : 1;
       const coat = coated ? {
         clearcoatRoughness: L.glossRough / floor,
         clearcoatRoughnessMap: this.scratchRoughness,
@@ -964,11 +1029,23 @@ export class RealisticCube {
         const settle = loaded => {
           if (this.disposed) return;
           this.canvas.dataset.wear = loaded ? "loaded" : "unavailable";
-          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
-            material.normalMap = null;
-            material.bumpMap = this.grain;
-            material.bumpScale = finish.bump;
-            material.needsUpdate = true;
+          if (!loaded) {
+            for (const material of Object.values(this.faceMaterials)) {
+              material.normalMap = null;
+              material.bumpMap = this.grain;
+              material.bumpScale = finish.bump;
+              material.needsUpdate = true;
+            }
+            shell.normalMap = null;
+            shell.bumpMap = this.grain;
+            shell.bumpScale = coated ? .0004 : .0008;
+            shell.needsUpdate = true;
+            if (this.holderMaterial) {
+              this.holderMaterial.normalMap = null;
+              this.holderMaterial.bumpMap = this.grain;
+              this.holderMaterial.bumpScale = holderBase.bump;
+              this.holderMaterial.needsUpdate = true;
+            }
           }
           this.render();
         };
@@ -983,14 +1060,32 @@ export class RealisticCube {
         const settle = loaded => {
           if (this.disposed) return;
           this.canvas.dataset.wearRoughness = loaded ? "loaded" : "unavailable";
-          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
-            material.roughness = baseRoughness;
-            material.roughnessMap = null;
-            if (material.clearcoatRoughnessMap === this.scratchRoughness) {
-              material.clearcoatRoughness = L.glossRough;
-              material.clearcoatRoughnessMap = null;
+          if (!loaded) {
+            for (const material of Object.values(this.faceMaterials)) {
+              material.roughness = baseRoughness;
+              material.roughnessMap = null;
+              if (material.clearcoatRoughnessMap === this.scratchRoughness) {
+                material.clearcoatRoughness = L.glossRough;
+                material.clearcoatRoughnessMap = null;
+              }
+              material.needsUpdate = true;
             }
-            material.needsUpdate = true;
+            shell.roughness = core.roughness;
+            shell.roughnessMap = null;
+            if (shell.clearcoatRoughnessMap === this.scratchRoughness) {
+              shell.clearcoatRoughness = core.clearcoatRoughness;
+              shell.clearcoatRoughnessMap = null;
+            }
+            shell.needsUpdate = true;
+            if (this.holderMaterial) {
+              this.holderMaterial.roughness = holderBase.roughness;
+              this.holderMaterial.roughnessMap = null;
+              if (this.holderMaterial.clearcoatRoughnessMap === this.scratchRoughness) {
+                this.holderMaterial.clearcoatRoughness = holderBase.clearcoatRoughness;
+                this.holderMaterial.clearcoatRoughnessMap = null;
+              }
+              this.holderMaterial.needsUpdate = true;
+            }
           }
           this.render();
         };
@@ -1061,7 +1156,8 @@ export class RealisticCube {
         this.root.add(seam);
         return seam;
       });
-      if (speedcube) { this.setupCenterMark(); this.setupJitter(); }
+      if (speedcube || stickers) this.setupCenterMark();
+      if (speedcube) this.setupJitter();
       if (settings.post) this.setupPost();
       this.observer = new ResizeObserver(() => this.resize());
       this.observer.observe(stage);
@@ -1086,7 +1182,11 @@ export class RealisticCube {
   }
   setupCenterMark() {
     // Printed center emblem, in the surface plane rather than raised geometry.
-    this.markTexture = new T.TextureLoader().load(new URL("./gan-logo.png", import.meta.url).href, texture => {
+    // The Stickers cube wears the retail Rubik's mark; the sculpted models wear
+    // the blue GAN emblem. Both are full-colour decals on the white center.
+    const rubiks = this.model === "stickers";
+    const emblem = rubiks ? "./rubiks-logo.png" : "./gan-logo.png";
+    this.markTexture = new T.TextureLoader().load(new URL(emblem, import.meta.url).href, texture => {
       if (this.disposed) { texture.dispose(); return; }
       this.canvas.dataset.logo = "loaded";
       this.render();
@@ -1094,12 +1194,16 @@ export class RealisticCube {
     this.markTexture.colorSpace = T.SRGBColorSpace;
     this.markTexture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     // The emblem is printed on the plastic and the coat goes over it, so it
-    // must not read as a matte decal on a glossy face.
+    // must not read as a matte decal on a glossy face. The Rubik's mark keeps
+    // its own ink — the palette must never tint it — and sits on satin vinyl.
     const coated = COATED(this.model);
-    this.markMaterial = this.material(new T.MeshPhysicalMaterial({ color: this.model === "og" ? 0x0d73b8 : 0x2474ef, map: this.markTexture, transparent: true, alphaTest: .15, roughness: coated ? .22 : .48, ...(coated ? { clearcoat: 1, clearcoatRoughness: .04, clearcoatNormalMap: this.coating, clearcoatNormalScale: new T.Vector2(.5, .5) } : {}), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    this.markMaterial = this.material(new T.MeshPhysicalMaterial({ color: rubiks ? 0xffffff : this.model === "og" ? 0x0d73b8 : 0x2474ef, map: this.markTexture, transparent: true, alphaTest: .15, roughness: coated ? .22 : rubiks ? .34 : .48, ...(coated ? { clearcoat: 1, clearcoatRoughness: .04, clearcoatNormalMap: this.coating, clearcoatNormalScale: new T.Vector2(.5, .5) } : {}), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
     if (coated) { this.markMaterial.envMapIntensity = this.light.env; this.coatingLighting(this.markMaterial); }
-    const markSize = .78;
-    this.mark = new T.Mesh(this.geometry(new T.PlaneGeometry(markSize, markSize)), this.markMaterial);
+    // The retail mark runs across the cap diagonally, wordmark and all.
+    this.markRoll = rubiks ? new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), T.MathUtils.degToRad(-45)) : null;
+    // The Rubik's decal canvas is 1024x540, so its plane keeps that aspect.
+    const markWidth = rubiks ? .88 : .78, markHeight = rubiks ? .464 : .78;
+    this.mark = new T.Mesh(this.geometry(new T.PlaneGeometry(markWidth, markHeight)), this.markMaterial);
     this.root.add(this.mark);
   }
   setupJitter(offset = .009, tilt = .6) {
@@ -1803,7 +1907,7 @@ export class RealisticCube {
   }
   setPalette(colors) {
     for (const [f, color] of Object.entries(colors)) this.faceMaterials[f].color.set(color);
-    if (this.markMaterial && this.model !== "og" && colors.B) this.markMaterial.color.set(colors.B);
+    if (this.markMaterial && this.model !== "og" && this.model !== "stickers" && colors.B) this.markMaterial.color.set(colors.B);
     this.render();
   }
   setTuning(values) {
@@ -1881,9 +1985,12 @@ export class RealisticCube {
         // Use the cap's actual normal, including piece tilt, so the printed mark
         // remains attached to the film throughout a turn.
         const markNormal = SEPARATE_HOLDERS(this.model) ? new T.Vector3(0, 0, 1).applyQuaternion(mesh.quaternion) : vector(n);
-        const markHeight = SEPARATE_HOLDERS(this.model) ? .0238 : COATED(this.model) ? COATING_CENTER + .0008 : .0208;
+        // The vinyl film's center sits at z = .0072 over a cap at .486; the
+        // other finishes have their own printed height.
+        const markHeight = SEPARATE_HOLDERS(this.model) ? .0286 : COATED(this.model) ? COATING_CENTER + .0008 : this.model === "stickers" ? .0082 : .0208;
         this.mark.position.copy(mesh.position).addScaledVector(markNormal, markHeight);
         this.mark.quaternion.copy(mesh.quaternion);
+        if (this.markRoll) this.mark.quaternion.multiply(this.markRoll);
       }
     });
     this.setMotion(spec, fraction);

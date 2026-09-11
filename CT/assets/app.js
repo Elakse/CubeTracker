@@ -272,6 +272,12 @@
     trainerThumbs = [],
     trainerObserver = null,
     trainerResizeObserver = null,
+    previewHost = null,
+    previewCube = null,
+    previewIdentity = null,
+    previewFailed = false,
+    previewDragging = false,
+    previewPending = new Set(),
     caseDrawer = null,
     training = null,
     keepPanel = false;
@@ -1432,8 +1438,9 @@ ${rankCard(status)}
     return [x, v[1] * cx - z * sx, v[1] * sx + z * cx];
   }
   function drawCaseThumb(mount) {
-    const state = mount._caseThumb,
-      canvas = state?.canvas;
+    const state = mount._caseThumb;
+    if (state?.realistic) { drawRealisticThumb(mount); return; }
+    const canvas = state?.canvas;
     if (!canvas || !canvas.isConnected) return;
     const width = Math.max(1, mount.clientWidth || 160),
       height = Math.max(1, mount.clientHeight || 114),
@@ -1541,6 +1548,11 @@ ${rankCard(status)}
   }
   function clearCaseThumb(mount) {
     if (mount._caseThumb?.raf) cancelAnimationFrame(mount._caseThumb.raf);
+    previewPending.delete(mount);
+    if (previewCube && previewCube.stage === mount) {
+      previewCube.park();
+      mount.classList.remove("hosting-live");
+    }
     mount._caseThumb = null;
     mount.replaceChildren();
   }
@@ -1548,9 +1560,19 @@ ${rankCard(status)}
     mount.addEventListener("pointerdown", (event) => {
       const state = mount._caseThumb;
       if (!state || mount.dataset.mode !== "3d") return;
+      if (state.realistic && previewCube && !previewCube.disposed) {
+        // Render the case before lending the canvas so the first frame is right.
+        previewCube.setPalette(state.colors);
+        previewCube.draw(state.stickers, null, 0);
+        previewCube.orbit(state.pitch, state.yaw, 1);
+        previewCube.adopt(mount);
+        previewDragging = true;
+        mount.classList.add("hosting-live");
+      }
       mount.setPointerCapture(event.pointerId);
       state.drag = { x: event.clientX, y: event.clientY, moved: false };
       mount.classList.add("is-orbiting");
+      queueCaseThumbDraw(mount);
     });
     mount.addEventListener("pointermove", (event) => {
       const state = mount._caseThumb;
@@ -1570,6 +1592,19 @@ ${rankCard(status)}
       if (!cancelled && state.drag.moved) mount.dataset.suppressOpen = "true";
       state.drag = null;
       mount.classList.remove("is-orbiting");
+      if (state.realistic && previewCube && previewCube.stage === mount) {
+        // Freeze the final frame into the card, then hand the canvas back.
+        previewCube.setPalette(state.colors);
+        previewCube.draw(state.stickers, null, 0);
+        previewCube.orbit(state.pitch, state.yaw, 1);
+        blitPreview(state, mount);
+        previewCube.park();
+        mount.classList.remove("hosting-live");
+        previewDragging = false;
+        const pending = [...previewPending];
+        previewPending.clear();
+        pending.forEach((el) => { if (el._caseThumb?.realistic && el.isConnected) drawRealisticThumb(el); });
+      }
     };
     mount.addEventListener("pointerup", () => finish());
     mount.addEventListener("pointercancel", () => finish(true));
@@ -1613,6 +1648,175 @@ ${rankCard(status)}
       raf: 0,
     };
     drawCaseThumb(mount);
+  }
+  // --- Realistic Trainer previews -------------------------------------------
+  // One shared cube renders every card: a still on a hidden host for cards at
+  // rest, and its live canvas borrowed by the single card being dragged. A large
+  // set therefore costs one WebGL context, not one per case. It is pinned to Low
+  // quality and the studio room, where the extra tiers are not resolvable at card
+  // size and the first frame stays synchronous.
+  const PREVIEW_SLOT = "trainer-preview";
+  function previewUsesRealistic() {
+    return !previewFailed && pref.cubeFinish !== "standard" && pref.trainerView === "3d";
+  }
+  function previewStage() {
+    if (previewHost?.isConnected) return previewHost;
+    previewHost = document.createElement("div");
+    previewHost.className = "cube-preview-host";
+    previewHost.setAttribute("aria-hidden", "true");
+    document.body.append(previewHost);
+    return previewHost;
+  }
+  function acquirePreview() {
+    const identity = `${pref.cubeFinish}|${pref.cubeWear ? 1 : 0}|${pref.cubeCore ?? "black"}`;
+    if (previewCube && !previewCube.disposed && previewIdentity === identity) {
+      if (!previewDragging) previewCube.adopt(previewStage());
+      return previewCube;
+    }
+    previewCube = cubeStudio.acquirePreviewCube(
+      PREVIEW_SLOT,
+      previewStage(),
+      () => { previewFailed = true; previewCube = null; repaintThumbs2D(); },
+      pref.cubeFinish,
+      Boolean(pref.cubeWear),
+      pref.cubeCore ?? "black",
+    );
+    previewIdentity = identity;
+    // Low's 1x buffer would blit soft on a retina display, so the shared preview
+    // cube renders at the device cap instead. Nothing else about Low changes.
+    const crisp = Math.min(devicePixelRatio || 1, 2);
+    if (previewCube && !previewCube.disposed && previewCube.restPixelRatio !== crisp) {
+      previewCube.restPixelRatio = crisp;
+      previewCube.renderer.setPixelRatio(crisp);
+      previewCube.resize();
+    }
+    return previewCube;
+  }
+  function caseThumb2D(mount, entry) {
+    try {
+      caseThumb(mount, C.setup(favouriteAlg(entry).moves), pref.trainerView);
+    } catch {
+      mount.textContent = "—";
+    }
+  }
+  function renderPreviewStill(state, width, height) {
+    const host = previewStage();
+    if (previewCube.stage !== host) previewCube.adopt(host);
+    host.style.width = `${width}px`;
+    host.style.height = `${height}px`;
+    previewCube.resize();
+    previewCube.setPalette(state.colors);
+    previewCube.draw(state.stickers, null, 0);
+    previewCube.orbit(state.pitch, state.yaw, 1);
+  }
+  function blitPreview(state, mount) {
+    if (!state.canvas || !previewCube) return;
+    const width = Math.max(1, mount.clientWidth || 160),
+      height = Math.max(1, mount.clientHeight || 114),
+      ratio = Math.min(devicePixelRatio || 1, 2),
+      pixelWidth = Math.round(width * ratio),
+      pixelHeight = Math.round(height * ratio);
+    if (state.canvas.width !== pixelWidth || state.canvas.height !== pixelHeight) {
+      state.canvas.width = pixelWidth;
+      state.canvas.height = pixelHeight;
+    }
+    const ctx = state.canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, pixelWidth, pixelHeight);
+    ctx.drawImage(previewCube.canvas, 0, 0, pixelWidth, pixelHeight);
+    state.canvas.dataset.pitch = state.pitch.toFixed(3);
+    state.canvas.dataset.yaw = state.yaw.toFixed(3);
+  }
+  function drawRealisticThumb(mount) {
+    const state = mount._caseThumb;
+    if (!state?.realistic || !previewCube || previewCube.disposed) return;
+    if (!state.canvas) {
+      const canvas = document.createElement("canvas");
+      canvas.className = "case-canvas";
+      const throbber = mount.querySelector(":scope > .cube-throbber");
+      if (throbber) {
+        // Keep the throbber mounted under the canvas so it can fade out instead
+        // of vanishing the instant the still lands.
+        throbber.classList.add("is-leaving");
+        mount.append(canvas);
+        setTimeout(() => throbber.remove(), 320);
+      } else {
+        mount.replaceChildren(canvas);
+      }
+      state.canvas = canvas;
+    }
+    if (previewCube.stage === mount) {
+      // This card holds the live canvas while it is being dragged.
+      previewCube.setPalette(state.colors);
+      previewCube.draw(state.stickers, null, 0);
+      previewCube.orbit(state.pitch, state.yaw, 1);
+      return;
+    }
+    if (previewDragging) { previewPending.add(mount); return; }
+    const width = Math.max(1, mount.clientWidth || 160),
+      height = Math.max(1, mount.clientHeight || 114);
+    renderPreviewStill(state, width, height);
+    blitPreview(state, mount);
+  }
+  async function paintRealisticThumb(mount, entry) {
+    const token = {};
+    mount._caseThumb = { token };
+    mount.innerHTML = CUBE_THROBBER;
+    let cube;
+    try {
+      const setup = C.setup(favouriteAlg(entry).moves);
+      cube = new C.Cube().apply([CUBE_CROSSES[pref.cubeCross].rotation, setup].filter(Boolean).join(" "));
+    } catch {
+      mount._caseThumb = null;
+      mount.textContent = "—";
+      return;
+    }
+    try {
+      if (!cubeStudio) cubeStudio = await import("./cube-realistic.js");
+    } catch {
+      previewFailed = true;
+      mount._caseThumb = null;
+      caseThumb2D(mount, entry);
+      return;
+    }
+    if (mount._caseThumb?.token !== token || !mount.isConnected) return;
+    // Let the throbber paint before the synchronous preview build.
+    await nextPaint();
+    if (mount._caseThumb?.token !== token || !mount.isConnected) return;
+    acquirePreview();
+    if (mount._caseThumb?.token !== token || !mount.isConnected) return;
+    mount._caseThumb = {
+      realistic: true,
+      token,
+      cube,
+      stickers: cube.stickers,
+      colors: CUBE_PALETTES[pref.cubePalette].colors,
+      pitch: CUBE_ORBITS.standard.pitch,
+      yaw: CUBE_ORBITS.standard.yaw,
+      drag: null,
+      raf: 0,
+      canvas: null,
+    };
+    drawRealisticThumb(mount);
+  }
+  function repaintThumbs2D() {
+    trainerThumbs.forEach((mount) => {
+      if (!mount.isConnected) return;
+      const entry = findCase(mount.dataset.caseThumb);
+      if (!entry) return;
+      clearCaseThumb(mount);
+      caseThumb2D(mount, entry);
+    });
+  }
+  function releasePreview() {
+    if (previewCube?.stage && previewCube.stage !== previewHost) previewCube.park();
+    cubeStudio?.discardCube(PREVIEW_SLOT);
+    previewCube = null;
+    previewIdentity = null;
+    previewDragging = false;
+    previewPending.clear();
+    previewHost?.remove();
+    previewHost = null;
   }
   const groupCases = (set, groupId) =>
     groupId
@@ -1678,11 +1882,12 @@ ${rankCard(status)}
   function paintThumb(el) {
     const entry = findCase(el.dataset.caseThumb);
     if (!entry) return;
-    try {
-      caseThumb(el, C.setup(favouriteAlg(entry).moves), pref.trainerView);
-    } catch {
-      el.textContent = "—";
+    clearCaseThumb(el);
+    if (previewUsesRealistic()) {
+      paintRealisticThumb(el, entry);
+      return;
     }
+    caseThumb2D(el, entry);
   }
   // The card behind the dialog carries the preferred algorithm and its case, so
   // starring a different one has to reach it without rebuilding the page.
@@ -2210,6 +2415,7 @@ ${rankCard(status)}
     trainerResizeObserver = null;
     trainerThumbs.forEach(clearCaseThumb);
     trainerThumbs = [];
+    releasePreview();
     $("#chart-tooltip").hidden = true;
     const focused = view === "timer" || view === "effects",
       inRound = view === "training",
@@ -2334,6 +2540,51 @@ ${rankCard(status)}
       .map((v) => (Math.abs(v) < 1e-9 ? 0 : v))
       .join(",")})`;
   }
+  // The throbber is a 96px window over a sprite sheet; its <i> is translated
+  // frame by frame. Transform animations run on the compositor, so the cube
+  // keeps bouncing while the main thread is blocked importing three.js,
+  // building geometry or compiling shaders.
+  const CUBE_THROBBER = '<span class="cube-throbber" aria-hidden="true"><i></i></span>';
+  function ensureCubeThrobber(mount) {
+    let throbber = mount.querySelector(":scope > .cube-throbber");
+    if (!throbber) {
+      throbber = document.createElement("span");
+      throbber.className = "cube-throbber";
+      throbber.setAttribute("aria-hidden", "true");
+      throbber.append(document.createElement("i"));
+      mount.append(throbber);
+    }
+    return throbber;
+  }
+  function beginCubeLoading(mount) {
+    if (!mount) return null;
+    clearTimeout(mount._loadingTimer);
+    mount._loadingTimer = 0;
+    mount.classList.remove("cube-loading-out");
+    mount.classList.add("cube-loading");
+    const throbber = ensureCubeThrobber(mount);
+    throbber.classList.remove("is-leaving");
+    return throbber;
+  }
+  // Fade the throbber and its veil, then take the shell down. Interrupting with
+  // beginCubeLoading restores both before the fade completes.
+  function endCubeLoading(mount, onComplete) {
+    if (!mount || !mount.classList.contains("cube-loading")) { onComplete?.(); return; }
+    mount.classList.add("cube-loading-out");
+    mount.querySelector(":scope > .cube-throbber")?.classList.add("is-leaving");
+    clearTimeout(mount._loadingTimer);
+    mount._loadingTimer = setTimeout(() => {
+      mount._loadingTimer = 0;
+      mount.classList.remove("cube-loading", "cube-loading-out");
+      mount.querySelector(":scope > .cube-throbber")?.remove();
+      onComplete?.();
+    }, reduced ? 0 : 320);
+  }
+  // Yield long enough for a just-inserted throbber to reach the compositor
+  // before a heavy synchronous build takes the main thread.
+  function nextPaint() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
   // True sticker coordinates drive both the 3D scene and the unfolded net.
   class CubeScene {
     constructor(mount, alg, appearance = null, options = {}) {
@@ -2369,6 +2620,7 @@ ${rankCard(status)}
         const preparing = scramblePending && mount.id !== "drawer-cube";
         mount.innerHTML = `<div class="empty-state cube-placeholder"><strong>${preparing ? "Preparing scramble…" : "No scramble recorded"}</strong></div>`;
         this.invalid = true;
+        endCubeLoading(mount);
         return;
       }
       try {
@@ -2381,9 +2633,14 @@ ${rankCard(status)}
       } catch (e) {
         mount.innerHTML = `<div class="empty-state"><strong>Scramble unavailable</strong>${esc(e.message)}</div>`;
         this.invalid = true;
+        endCubeLoading(mount);
         return;
       }
+      // innerHTML wipes any throbber the caller mounted for the loading shell;
+      // keep the same node so its compositor animation never restarts.
+      const pendingThrobber = mount.querySelector(":scope > .cube-throbber");
       mount.innerHTML = `<div class="cube-stage" data-mode="3d" tabindex="0" role="img" aria-label="3 by 3 cube, white up and green front. Drag or use arrow keys to rotate, click to switch to the flat net, Home to reset."><div class="cube-world"></div></div>`;
+      if (pendingThrobber) mount.append(pendingThrobber);
       this.stage = $(".cube-stage", mount);
       // Which renderer this cube uses is known now, so the stage is marked
       // before its first paint. Deciding it only after the async renderer
@@ -2407,23 +2664,47 @@ ${rankCard(status)}
       this.draw();
       this.orbit();
       this.bind();
-      // setAppearance() calls ready() when the cube is actually on the stage —
-      // immediately for the standard cube, after the renderer is up for a 3D
-      // one. Both kinds therefore animate in and begin their scramble at the
+      // setAppearance() ends the loading shell when the cube is actually on the
+      // stage — immediately for the standard cube, after the renderer is up for a
+      // 3D one. Both kinds therefore animate in and begin their scramble at the
       // same point in their own lifecycle, which is the whole of the fix: the
       // entrance used to start on a 60ms timer regardless, so a 3D cube spent
       // its animation on an empty stage and then stuttered when the renderer
       // finally blocked the main thread.
       this.setAppearance();
     }
-    // The cube is on screen. Animate it in and, if this scene plays its
-    // scramble, start that now.
-    ready() {
-      if (this.invalid || this.disposed || this.started) return;
-      this.started = true;
-      this.mount.classList.remove("cube-loading");
-      if (this.materializes) this.stage.classList.add("cube-materialize");
-      if (this.entrance) this.startEntrance();
+    // The cube's first frame is on the stage: fade the loading shell out and
+    // materialize the cube. A rebuild (a different model, quality or
+    // environment) materializes again; palette-only changes leave it still.
+    finishLoad() {
+      if (this.disposed) return;
+      const request = this.appearanceRequest;
+      const reveal = () => {
+        if (this.disposed || request !== this.appearanceRequest) return;
+        const first = !this.started && !this.invalid;
+        if (first) this.started = true;
+        const identity = this.realisticIdentity;
+        if (this.materializes && (first || identity !== this.materializedIdentity)) {
+          this.materializedIdentity = identity;
+          this.replayMaterialize();
+        }
+        if (first && this.entrance) this.startEntrance();
+      };
+      if (this.slot === "appearance-cube") endCubeLoading(this.mount, reveal);
+      else { endCubeLoading(this.mount); reveal(); }
+    }
+    replayMaterialize() {
+      const stage = this.stage;
+      if (!stage) return;
+      // Toggling the class is not enough: the browser can keep the same
+      // animation alive and its clock keeps running during the rebuild, so the
+      // cube is already back to full size by the first painted frame. Forcing
+      // animation-name to `none`, reflowing, then restoring it restarts the
+      // animation at the next frame instead.
+      stage.classList.add("cube-materialize");
+      stage.style.animation = "none";
+      void stage.offsetWidth;
+      stage.style.animation = "";
     }
     startEntrance() {
       const delay = reduced ? 0 : 60;
@@ -2443,12 +2724,19 @@ ${rankCard(status)}
       if (this.mode === "net") this.drawNet();
       this.stage.setAttribute("aria-label", "3 by 3 cube. Drag or use arrow keys to rotate, click to switch to the flat net, Home to reset.");
       this.realisticWanted = this.appearance.cubeFinish !== "standard";
+      // A model, quality, environment, wear or core change rebuilds the whole
+      // renderer and blocks the main thread. Only that path earns the loading
+      // shell; palette or cross tweaks adopt the live cube and stay instant.
+      const identity = [this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear ? 1 : 0, this.appearance.cubeCore ?? pref.cubeCore].join("|");
+      const rebuild = identity !== this.realisticIdentity || !this.realistic || this.realistic.disposed;
+      this.realisticIdentity = identity;
       if (!this.realisticWanted) {
-        cubeStudio?.discardCube(this.slot);
+        if (this.slot === "appearance-cube") cubeStudio?.releaseCube(this.slot);
+        else cubeStudio?.discardCube(this.slot);
         this.realistic = null;
         this.stage.classList.remove("cube-realistic");
         this.draw();
-        this.ready();
+        this.finishLoad();
         return;
       }
       // Marked before the await, not after it: in the gap while the renderer
@@ -2460,19 +2748,27 @@ ${rankCard(status)}
         const studio = cubeStudio || (cubeStudio = await import("./cube-realistic.js"));
         phase = "render";
         if (this.disposed || request !== this.appearanceRequest) return;
+        if (rebuild && (this.started || this.mount.classList.contains("cube-loading"))) {
+          // Show the throbber and let it paint before the build blocks the
+          // thread; the transform animation then rides the compositor.
+          beginCubeLoading(this.mount);
+          await nextPaint();
+          if (this.disposed || request !== this.appearanceRequest) return;
+        }
         // Quality, model and environment are baked into the renderer's targets,
         // materials and geometry, so acquireCube rebuilds when any of them
         // changes and otherwise adopts the slot's existing renderer — which is
         // what makes a new scramble cost a resize instead of a WebGL context and
         // a shader compile.
-        this.realistic = studio.acquireCube(this.slot, this.stage, () => this.fallbackAppearance(), this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore, () => this.ready());
+        const current = () => !this.disposed && request === this.appearanceRequest;
+        this.realistic = studio.acquireCube(this.slot, this.stage, () => { if (current()) this.fallbackAppearance(); }, this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore, () => { if (current()) this.finishLoad(); });
         this.realistic.setPalette(CUBE_PALETTES[this.appearance.cubePalette].colors);
         if (this.isStudio && this.appearance.values) this.realistic.setTuning(this.appearance.values);
         this.draw();
         this.orbit();
         // A photographic environment draws its first frame when the photograph
         // lands, not now; the spawn animation waits for that frame.
-        if (this.appearance.cubeEnvironment === "studio" || this.realistic.scene.environment) this.ready();
+        if (this.appearance.cubeEnvironment === "studio" || this.realistic.scene.environment) this.finishLoad();
       } catch (error) {
         if (!this.disposed && request === this.appearanceRequest) {
           console.warn(`CubeTracker 3D ${phase} failed:`, error);
@@ -2490,7 +2786,7 @@ ${rankCard(status)}
       this.realisticWanted = false;
       this.stage.classList.remove("cube-realistic");
       this.draw();
-      this.ready();
+      this.finishLoad();
       const status = $("#cube-finish-status");
       if (status) status.textContent = reason === "load"
         ? "The cube could not load. Reload the app; if this continues, restart CubeTracker."
@@ -2711,8 +3007,6 @@ ${rankCard(status)}
       this.zoom = Math.max(.55, Math.min(1.8, Number(value) || 1));
       this.orbit();
       this.endStudioInteraction(120);
-      const output = $("#studio-zoom-value");
-      if (output) output.textContent = `${Math.round(this.zoom * 100)}%`;
     }
     async step(direction) {
       if (this.invalid || this.busy || this.disposed) return;
@@ -2794,6 +3088,7 @@ ${rankCard(status)}
     destroy() {
       this.disposed = true;
       this.playing = false;
+      endCubeLoading(this.mount);
       clearTimeout(this.entranceTimer);
       cancelAnimationFrame(this.anim);
       cancelAnimationFrame(this.inertia);
@@ -3963,13 +4258,13 @@ ${rankCard(status)}
   }
 
   let dialogCloseTimer = 0,
-    cubeSlideTimer = 0;
+    cubeApplyTimer = 0;
   function showDialog(title, body, cls = "") {
     motion?.clear();
     disposeSolveVideoUrl();
     averageDrawer = null;
     clearTimeout(dialogCloseTimer);
-    clearTimeout(cubeSlideTimer);
+    clearTimeout(cubeApplyTimer);
     drawerScene?.destroy();
     appearanceScene?.destroy();
     lightingScene?.destroy();
@@ -4008,6 +4303,7 @@ ${rankCard(status)}
     caseDrawer = null;
     disposeSolveVideoUrl();
     clearTimeout(dialogCloseTimer);
+    clearTimeout(cubeApplyTimer);
     $("#dialog").classList.remove("closing");
     drawerScene?.destroy();
     closingAppearanceScene?.destroy();
@@ -4314,7 +4610,7 @@ ${rankCard(status)}
     appearanceSuspendedMainCube = false;
     const mount = $("#cube-mount");
     if (!mount || scene || view === "lighting") return;
-    mount.classList.add("cube-loading");
+    beginCubeLoading(mount);
     // Closing the modal reveals the page first. Only on the following paint do
     // we dispose the modal cube and build the returning one.
     requestAnimationFrame(() => {
@@ -4331,7 +4627,7 @@ ${rankCard(status)}
     const token = ++appearanceLoadToken,
       mount = $("#appearance-cube");
     if (!mount) return;
-    mount.classList.add("cube-loading");
+    beginCubeLoading(mount);
     // Two frames guarantee that the modal and placeholder are visible before
     // module work, geometry construction or shader compilation begins.
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -4414,12 +4710,13 @@ ${rankCard(status)}
       cubeQuality: next?.cubeQuality ?? lightingState?.cubeQuality ?? pref.cubeQuality,
       cubeWear: next?.cubeWear ?? lightingState?.cubeWear ?? pref.cubeWear,
       cubeCore: next?.cubeCore ?? lightingState?.cubeCore ?? pref.cubeCore,
+      cubeCross: next?.cubeCross ?? lightingState?.cubeCross ?? pref.cubeCross,
       values: Object.fromEntries(Object.keys(LIGHTING_CONTROLS).map(key => [key, tuning[key]])),
     };
     navigate("lighting");
   }
   function lightingStudioPage() {
-    if (!lightingState) return `<div class="lighting-loading" role="status"><span class="cube-throbber" aria-hidden="true"></span>Opening lighting studio…</div>`;
+    if (!lightingState) return `<div class="lighting-loading" role="status">${CUBE_THROBBER}Opening lighting studio…</div>`;
     const model = lightingState.cubeFinish,
       environment = lightingState.cubeEnvironment,
       environmentOptions = Object.entries(CUBE_ENVIRONMENTS).map(([value, item]) =>
@@ -4428,10 +4725,14 @@ ${rankCard(status)}
         `<option value="${value}"${value === model ? " selected" : ""}>${item.label}</option>`).join(""),
       qualityOptions = Object.entries(CUBE_QUALITY).map(([value, item]) =>
         `<option value="${value}"${value === lightingState.cubeQuality ? " selected" : ""}>${item.label}</option>`).join(""),
-      displayOptions = [["system", "System"], ["light", "Light"], ["dark", "Dark"], ["contrast", "High contrast"]].map(([value, label]) =>
-        `<option value="${value}"${value === pref.theme ? " selected" : ""}>${label}</option>`).join(""),
       realistic = model !== "standard";
-    return `<div class="lighting-screen"><section class="lighting-canvas"><button class="studio-back" data-action="studio-exit" aria-label="Back to Appearance">${icon("left")}<span>Appearance</span></button><div id="cube-lighting-studio" class="lighting-cube"></div><div class="studio-zoom" aria-label="Zoom controls"><button class="icon-btn" data-action="studio-zoom-out" aria-label="Zoom out">−</button><output id="studio-zoom-value">100%</output><button class="icon-btn" data-action="studio-zoom-in" aria-label="Zoom in">+</button><button class="btn-link" data-action="studio-reset-view">Reset</button></div></section><aside class="lighting-panel"><header class="lighting-panel-title"><div><h1>Cube studio</h1><p>Drag to rotate · scroll to zoom</p></div><button class="icon-btn" data-action="studio-exit" aria-label="Close studio">${icon("close")}</button></header><section class="studio-section"><div class="studio-section-title">Appearance</div><div class="lighting-context"><label class="field">Model<select data-control="studio-model">${modelOptions}</select></label><label class="field">Environment<select data-control="studio-environment"${realistic ? "" : " disabled"}>${environmentOptions}</select></label><label class="field">Quality<select data-control="studio-quality"${realistic ? "" : " disabled"}>${qualityOptions}</select></label><label class="field">Display<select data-control="studio-theme">${displayOptions}</select></label></div><div class="studio-option-row"><span>Colors</span><div class="studio-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, item]) => `<button data-studio-palette="${value}" aria-pressed="${lightingState.cubePalette === value}" title="${item.label}"><span>${Object.values(item.colors).map(color => `<i style="background:${color}"></i>`).join("")}</span><small>${item.label}</small></button>`).join("")}</div></div><div class="studio-option-row"><span>Accent</span><div class="studio-accent-options" role="group" aria-label="App accent">${[["forest", "#6e8751"], ["ocean", "#3698b7"], ["violet", "#8262cc"], ["ember", "#d6754f"]].map(([value, color]) => `<button data-studio-accent="${value}" aria-pressed="${pref.accent === value}" aria-label="${value}" style="--studio-accent:${color}"></button>`).join("")}</div></div><label class="studio-wear"><span><strong>Wear</strong><small>Preview scratches and handling haze</small></span><input type="checkbox" data-control="studio-wear"${lightingState.cubeWear ? " checked" : ""}${realistic ? "" : " disabled"}><i></i></label></section><section class="studio-section lighting-tuning${realistic ? "" : " disabled"}"><div class="lighting-panel-head"><div class="studio-section-title">Light & material</div><button class="btn-link" data-action="studio-reset-tuning"${realistic ? "" : " disabled"}>Reset</button></div>${realistic ? `<div class="lighting-control-list">${Object.entries(lightingState.values).map(([key, value]) => lightingControl(key, value)).join("")}</div>` : `<p class="studio-empty-note">Choose a realistic model to tune its lighting.</p>`}</section><div class="lighting-actions"><p id="lighting-save-status" class="lighting-save-status" role="status">${realistic ? server ? "Ready to save this calibration." : "Use the local launcher to save." : "Lighting is not available for Standard."}</p><button class="btn btn-dark" data-action="studio-confirm-open"${server && realistic ? "" : " disabled"}>Hardcode calibration</button></div></aside><div class="studio-confirm" role="dialog" aria-modal="true" aria-labelledby="studio-confirm-title" hidden><div><span class="studio-confirm-icon">${icon("settings")}</span><h3 id="studio-confirm-title">Hardcode this calibration?</h3><p>This writes the current light and material values into <strong>${CUBE_ENVIRONMENTS[environment].label}</strong> for <strong>${CUBE_MODELS[model].label}</strong>.</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="studio-confirm-cancel">Cancel</button><button class="btn btn-dark" data-action="studio-confirm-save">Yes, hardcode values</button></div></div></div></div>`;
+    const paletteOptions = Object.entries(CUBE_PALETTES).map(([value, item]) =>
+        `<button data-studio-palette="${value}" aria-pressed="${lightingState.cubePalette === value}" title="${item.label}"><span>${["U", "D", "F", "B", "L", "R"].map(face => `<i style="background:${item.colors[face]}"></i>`).join("")}</span><small>${item.label}</small></button>`).join(""),
+      coreOptions = Object.entries(CUBE_CORES).map(([value, item]) =>
+        `<button data-studio-core="${value}" aria-pressed="${lightingState.cubeCore === value}"><i style="background:${item.swatch}"></i>${item.label}</button>`).join(""),
+      crossOptions = Object.entries(CUBE_CROSSES).map(([face, item]) =>
+        `<button data-studio-cross="${face}" aria-pressed="${lightingState.cubeCross === face}" aria-label="${item.label}" title="${item.label}"><i style="background:${CUBE_PALETTES[lightingState.cubePalette].colors[face]}"></i></button>`).join("");
+    return `<div class="lighting-screen"><section class="lighting-canvas"><button class="studio-back" data-action="studio-exit" aria-label="Back to Appearance">${icon("left")}<span>Appearance</span></button><div id="cube-lighting-studio" class="lighting-cube"></div></section><aside class="lighting-panel"><header class="lighting-panel-title"><div><h1>Lighting studio</h1><p>Drag to rotate · scroll to zoom</p></div><button class="icon-btn" data-action="studio-exit" aria-label="Close studio">${icon("close")}</button></header><section class="studio-section studio-cube-settings"><div class="studio-section-title">Cube settings</div><div class="lighting-context"><label class="field">Model<select data-control="studio-model">${modelOptions}</select></label><label class="field">Environment<select data-control="studio-environment"${realistic ? "" : " disabled"}>${environmentOptions}</select></label><label class="field studio-quality-field">Graphics quality<select data-control="studio-quality"${realistic ? "" : " disabled"}>${qualityOptions}</select></label></div><div class="studio-setting-group"><span class="studio-setting-label">Colors</span><div class="studio-palette-options" role="group" aria-label="Cube colors">${paletteOptions}</div></div><div class="studio-setting-columns"><div class="studio-setting-group"><span class="studio-setting-label">Core</span><div class="studio-core-options" role="group" aria-label="Core color">${coreOptions}</div></div><div class="studio-setting-group"><span class="studio-setting-label">Cross color</span><div class="studio-cross-options" role="group" aria-label="Preferred cross color">${crossOptions}</div></div></div><label class="studio-wear"><span><strong>Surface wear</strong><small>Preview scratches and handling haze</small></span><input type="checkbox" data-control="studio-wear"${lightingState.cubeWear ? " checked" : ""}${realistic ? "" : " disabled"}><i></i></label></section><section class="studio-section lighting-tuning${realistic ? "" : " disabled"}"><div class="lighting-panel-head"><div class="studio-section-title">Light & material</div><button class="btn-link" data-action="studio-reset-tuning"${realistic ? "" : " disabled"}>Reset values</button></div>${realistic ? `<div class="lighting-control-list">${Object.entries(lightingState.values).map(([key, value]) => lightingControl(key, value)).join("")}</div>` : `<p class="studio-empty-note">Choose a realistic model to tune its lighting.</p>`}<div class="lighting-save-controls"><p id="lighting-save-status" class="lighting-save-status" role="status">${realistic ? server ? "Ready to save this calibration." : "Use the local launcher to save." : "Lighting is not available for Standard."}</p><button class="btn btn-dark" data-action="studio-confirm-open"${server && realistic ? "" : " disabled"}>Hardcode calibration</button></div></section></aside><div class="studio-confirm" role="dialog" aria-modal="true" aria-labelledby="studio-confirm-title" hidden><div><span class="studio-confirm-icon">${icon("settings")}</span><h3 id="studio-confirm-title">Hardcode this calibration?</h3><p>This writes the current light and material values into <strong>${CUBE_ENVIRONMENTS[environment].label}</strong> for <strong>${CUBE_MODELS[model].label}</strong>.</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="studio-confirm-cancel">Cancel</button><button class="btn btn-dark" data-action="studio-confirm-save">Yes, hardcode values</button></div></div></div></div>`;
   }
   function exitLightingStudio() {
     const destination = ["overview", "timer", "solves", "insights"].includes(lightingReturnView) ? lightingReturnView : "timer";
@@ -4491,10 +4792,10 @@ ${rankCard(status)}
       button.textContent = "Yes, hardcode values";
     }
   }
-  // Everything that has to change when a cube setting changes, in one place:
-  // the carousel calls it midway through its slide, every other control calls
-  // it straight away.
-  function applyCubeSelection(crossFrom = null) {
+  // The lightweight half: captions, dots, pressed states and the saved
+  // preference. Carousel steps call this immediately; the cube rebuild is
+  // debounced behind it.
+  function updateCubeSelectionUI() {
     savePref();
     const carousel = $(".cube-carousel");
     if (carousel) carousel.dataset.model = pref.cubeFinish;
@@ -4515,6 +4816,11 @@ ${rankCard(status)}
       if ($("#environment-value")) $("#environment-value").textContent = CUBE_ENVIRONMENTS[pref.cubeEnvironment].label;
       $("#cube-finish-status").textContent = "";
     }
+  }
+  // Apply the selected settings after carousel input settles, or immediately
+  // when a setting control changes.
+  function applyCubeSelection(crossFrom = null) {
+    updateCubeSelectionUI();
     scene?.setAppearance();
     drawerScene?.setAppearance();
     if (crossFrom && crossFrom !== pref.cubeCross) appearanceScene?.animateCross(crossFrom, pref.cubeCross);
@@ -4522,32 +4828,26 @@ ${rankCard(status)}
     trainerThumbs.forEach(el => { if (el.firstElementChild) paintThumb(el); });
     warmCubeStudio();
   }
-  // The cube on screen leaves towards the side the press pointed away from and
-  // the next one arrives from the side that was pressed. The model swap happens
-  // at the halfway point, while the track is off-frame and invisible, so the
-  // renderer's own rebuild never shows.
+  // Navigation always responds immediately. Coalesce rapid presses before
+  // preparing the selected model; the loading shell stays still throughout.
   function stepCubeModel(direction) {
     const models = Object.keys(CUBE_MODELS);
     pref.cubeFinish = models[(models.indexOf(pref.cubeFinish) + direction + models.length) % models.length];
-    const track = $(".cube-carousel-track");
-    if (!track || reduced) {
-      applyCubeSelection();
-      return;
+    updateCubeSelectionUI();
+    const mount = $("#appearance-cube");
+    if (!mount) return;
+    clearTimeout(cubeApplyTimer);
+    // Invalidate callbacks now, including an environment fetch or reveal from
+    // the previous model that may finish during the debounce window.
+    if (appearanceScene) {
+      appearanceScene.appearanceRequest++;
+      appearanceScene.materializedIdentity = null;
     }
-    clearTimeout(cubeSlideTimer);
-    track.classList.remove("cube-slide-in");
-    track.style.setProperty("--slide", `${-direction * 55}%`);
-    track.classList.add("cube-slide-out");
-    cubeSlideTimer = setTimeout(() => {
-      applyCubeSelection();
-      track.style.setProperty("--slide", `${direction * 55}%`);
-      track.classList.remove("cube-slide-out");
-      track.classList.add("cube-slide-hold");
-      void track.offsetWidth;
-      track.classList.remove("cube-slide-hold");
-      track.classList.add("cube-slide-in");
-      cubeSlideTimer = setTimeout(() => track.classList.remove("cube-slide-in"), 320);
-    }, 160);
+    beginCubeLoading(mount);
+    cubeApplyTimer = setTimeout(() => {
+      cubeApplyTimer = 0;
+      if (mount.isConnected && $("#dialog").open) applyCubeSelection();
+    }, 120);
   }
   function closeQualityMenu() {
     const select = $(".quality-select.open");
@@ -4844,14 +5144,26 @@ ${rankCard(status)}
       lightingState.cubePalette = pref.cubePalette = b.dataset.studioPalette;
       savePref();
       $$('[data-studio-palette]').forEach(el => el.setAttribute("aria-pressed", String(el.dataset.studioPalette === pref.cubePalette)));
+      $$('[data-studio-cross]').forEach(el => {
+        const swatch = $("i", el);
+        if (swatch) swatch.style.background = CUBE_PALETTES[pref.cubePalette].colors[el.dataset.studioCross];
+      });
       lightingScene?.setAppearance();
       return;
     }
-    if (b.dataset.studioAccent && Object.hasOwn({ forest: 1, ocean: 1, violet: 1, ember: 1 }, b.dataset.studioAccent)) {
-      pref.accent = b.dataset.studioAccent;
+    if (b.dataset.studioCore && lightingState && Object.hasOwn(CUBE_CORES, b.dataset.studioCore)) {
+      lightingState.cubeCore = pref.cubeCore = b.dataset.studioCore;
       savePref();
-      applyTheme();
-      $$('[data-studio-accent]').forEach(el => el.setAttribute("aria-pressed", String(el.dataset.studioAccent === pref.accent)));
+      $$('[data-studio-core]').forEach(el => el.setAttribute("aria-pressed", String(el.dataset.studioCore === pref.cubeCore)));
+      lightingScene?.setAppearance();
+      return;
+    }
+    if (b.dataset.studioCross && lightingState && Object.hasOwn(CUBE_CROSSES, b.dataset.studioCross)) {
+      const previousCross = lightingState.cubeCross;
+      lightingState.cubeCross = pref.cubeCross = b.dataset.studioCross;
+      savePref();
+      $$('[data-studio-cross]').forEach(el => el.setAttribute("aria-pressed", String(el.dataset.studioCross === pref.cubeCross)));
+      lightingScene?.animateCross(previousCross, lightingState.cubeCross);
       return;
     }
     if (b.dataset.themeChoice) {
@@ -5039,19 +5351,6 @@ ${rankCard(status)}
       case "studio-exit":
         exitLightingStudio();
         break;
-      case "studio-zoom-out":
-        lightingScene?.setZoom(lightingScene.zoom / 1.16);
-        break;
-      case "studio-zoom-in":
-        lightingScene?.setZoom(lightingScene.zoom * 1.16);
-        break;
-      case "studio-reset-view":
-        if (lightingScene) {
-          lightingScene.pitch = CUBE_ORBITS.threeD.pitch;
-          lightingScene.yaw = CUBE_ORBITS.threeD.yaw;
-          lightingScene.setZoom(1);
-        }
-        break;
       case "studio-reset-tuning": {
         if (!lightingState) break;
         const defaults = cubeStudio.cubeTuning(lightingState.cubeFinish, lightingState.cubeEnvironment, true);
@@ -5148,15 +5447,12 @@ ${rankCard(status)}
           await lightingStudio({ ...lightingState, cubeQuality: e.target.value });
         }
         return;
-      case "studio-theme":
-        if (["system", "light", "dark", "contrast"].includes(e.target.value)) {
-          pref.theme = e.target.value;
-          savePref();
-          applyTheme();
-        }
-        return;
       case "studio-wear":
-        if (lightingState) await lightingStudio({ ...lightingState, cubeWear: e.target.checked });
+        if (lightingState) {
+          pref.cubeWear = e.target.checked;
+          savePref();
+          await lightingStudio({ ...lightingState, cubeWear: e.target.checked });
+        }
         return;
       case "cube-wear":
         pref.cubeWear = e.target.checked;
@@ -5338,7 +5634,7 @@ ${rankCard(status)}
   });
   async function init() {
     renderIcons();
-    $("#main").innerHTML = '<div class="loading" role="status"><span class="cube-throbber" aria-hidden="true"></span>Loading…</div>';
+    $("#main").innerHTML = `<div class="loading" role="status">${CUBE_THROBBER}Loading…</div>`;
     const loadingPaint = new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 800)));
     let cached;
     try {

@@ -496,6 +496,7 @@ const server = http.createServer(async (req, res) => {
         "/assets/cube-realistic.js",
         "/assets/environments.js",
         "/assets/gan-logo.png",
+        "/assets/rubiks-logo.png",
         "/assets/plastic_0010_2k_9akcRm/plastic_0010_normal_opengl_2k.png",
         "/assets/plastic_0010_2k_9akcRm/plastic_0010_roughness_2k.jpg",
         "/assets/plastic_0010_2k_9akcRm/plastic_0010_color_2k.jpg",

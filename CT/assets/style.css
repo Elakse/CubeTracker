@@ -2446,14 +2446,14 @@ dialog.solve-detail .dialog-body label.field {
 /* carousel */
 .cube-carousel { display: flex; flex-direction: column; align-items: center; gap: 9px; width: 100%; }
 .cube-carousel-frame { position: relative; width: min(100%, 360px); aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: 13px; background: radial-gradient(ellipse at 45% 22%, var(--surface-2), var(--tint)); }
-.cube-carousel-track { position: relative; height: 100%; will-change: transform; }
+.cube-carousel-track { position: relative; height: 100%; }
 .cube-carousel-track #appearance-cube { height: 100%; }
 .cube-carousel-track .cube-stage { height: 100%; }
+/* Keep the new cube hidden for the entire throbber fade. Its entrance starts
+   only when the loading shell has been removed. */
+#appearance-cube.cube-loading > .cube-stage { visibility: hidden; pointer-events: none; }
 .cube-carousel-caption { position: absolute; z-index: 2; right: 54px; bottom: 12px; left: 54px; text-align: center; pointer-events: none; }
 .cube-carousel-caption strong { display: block; color: var(--ink); font-size: 13px; }
-.cube-carousel-track.cube-slide-out { transform: translateX(var(--slide)); opacity: 0; transition: transform .16s cubic-bezier(.55, 0, .85, .35), opacity .15s ease-in; }
-.cube-carousel-track.cube-slide-hold { transform: translateX(var(--slide)); opacity: 0; transition: none; }
-.cube-carousel-track.cube-slide-in { transform: none; opacity: 1; transition: transform .3s cubic-bezier(.2, .74, .28, 1), opacity .22s ease-out; }
 /* No circle and no icon button: the outer quarter of the stage on each side is
    the target, so changing cube is a press anywhere past that threshold. The
    middle stays free for dragging the cube around. */
@@ -2528,7 +2528,7 @@ dialog.solve-detail .dialog-body label.field {
 .cube-realistic::after, .cube-stage[data-mode="net"]::after { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .cube-carousel-track, .cube-carousel-dots i, .quality-menu { transition: none; }
-  .cube-loading::after { animation: none; }
+  .cube-throbber > i { animation: none; }
 }
 /* Below the workspace threshold the panes stack and the dialog scrolls as one. */
 @media (max-width: 1050px), (max-height: 720px) {
@@ -2557,6 +2557,21 @@ body.lighting-mode .sidebar,
 body.lighting-mode .sidebar-hotzone,
 body.lighting-mode .sidebar-scrim,
 body.lighting-mode .footer { display: none; }
+body.lighting-mode .main-shell {
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  margin-left: 0;
+}
+body.lighting-mode.focus-mode .main-shell { width: 100%; margin-left: 0; }
+body.lighting-mode main {
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
 .lighting-screen { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 14px; width: 100%; height: 100dvh; padding: 18px 20px 20px; background: var(--bg); }
 .lighting-screen-head { display: grid; grid-template-columns: 150px minmax(0, 1fr) 230px; align-items: center; gap: 18px; }
 .lighting-screen-head > div { display: flex; align-items: center; justify-content: center; gap: 12px; min-width: 0; }
@@ -2577,10 +2592,6 @@ body.lighting-mode .footer { display: none; }
 .lighting-stage-top { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .lighting-stage-top > div:first-child { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .lighting-stage-top strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.studio-zoom { display: flex; align-items: center; gap: 7px; }
-.studio-zoom .icon-btn { width: 30px; height: 30px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--ink); font-size: 17px; line-height: 1; }
-.studio-zoom output { width: 43px; color: var(--muted); font: 10px var(--mono); text-align: center; }
-.studio-zoom .btn { padding: 7px 10px; }
 .lighting-cube { flex: 1 1 auto; min-height: 280px; }
 .lighting-cube .cube-stage { height: 100%; min-height: 280px; cursor: grab; }
 .lighting-cube .cube-stage:active { cursor: grabbing; }
@@ -2606,7 +2617,6 @@ body.lighting-mode .footer { display: none; }
 .lighting-save-note { margin: 14px 2px 0 !important; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .lighting-save-status { min-height: 15px; margin: 6px 2px 0 !important; color: var(--green); font-size: 9px; line-height: 1.5; }
 .lighting-save-status.error { color: var(--danger); }
-.lighting-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 14px; }
 .studio-confirm { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; padding: 18px; border-radius: 16px; background: color-mix(in srgb, var(--backdrop) 84%, transparent); backdrop-filter: blur(9px); }
 .studio-confirm[hidden] { display: none; }
 .studio-confirm > div { width: min(430px, 100%); padding: 24px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--paper); box-shadow: 0 20px 70px var(--shadow-dialog); text-align: center; }
@@ -2639,8 +2649,6 @@ body.lighting-mode .footer { display: none; }
   .lighting-studio-dialog .dialog-body { padding: 4px 12px 16px; }
   .lighting-stage-top { align-items: flex-start; flex-direction: column; }
   .lighting-context { grid-template-columns: minmax(0, 1fr); }
-  .lighting-actions { align-items: stretch; flex-direction: column-reverse; }
-  .lighting-actions .btn { justify-content: center; }
 }
 
 /* The studio itself is deliberately quieter than the setup dialog: one empty
@@ -2649,7 +2657,8 @@ body.lighting-mode { background: var(--bg); }
 .lighting-screen {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(420px, 31vw, 470px);
+  grid-template-columns: minmax(0, 1fr) clamp(400px, 30vw, 448px);
+  grid-template-rows: minmax(0, 1fr);
   gap: 0;
   width: 100%;
   height: 100dvh;
@@ -2682,21 +2691,6 @@ body.lighting-mode { background: var(--bg); }
 }
 .studio-back:hover { color: var(--ink); background: var(--surface-2); }
 .studio-back svg { width: 15px; height: 15px; }
-.lighting-canvas > .studio-zoom {
-  position: absolute;
-  z-index: 3;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  padding: 5px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--paper) 88%, transparent);
-  box-shadow: 0 6px 22px var(--shadow-color);
-  backdrop-filter: blur(10px);
-}
-.lighting-canvas > .studio-zoom .icon-btn { border: 0; background: transparent; }
-.lighting-canvas > .studio-zoom .btn-link { padding: 5px 8px; font-size: 9px; }
 .lighting-panel {
   display: flex;
   flex-direction: column;
@@ -2724,21 +2718,30 @@ body.lighting-mode { background: var(--bg); }
 .lighting-panel-title .icon-btn { width: 31px; height: 31px; color: var(--muted); }
 .studio-section { flex: none; padding: 19px 0 20px; border-bottom: 1px solid var(--line); }
 .studio-section-title { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
-.lighting-context { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; margin-top: 13px; }
-.lighting-context .field { color: var(--muted); font-size: 8px; letter-spacing: .03em; }
-.lighting-context select { height: 37px; margin-top: 5px; padding: 7px 9px; border-color: var(--line); background: var(--paper); color: var(--ink); font-size: 10px; }
-.studio-option-row { display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: center; gap: 11px; margin-top: 14px; }
-.studio-option-row > span { color: var(--muted); font-size: 9px; }
+.lighting-context { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; margin-top: 15px; }
+.lighting-context .field { display: grid; gap: 5px; color: var(--muted); font-size: 8px; letter-spacing: .03em; }
+.lighting-context select { width: 100%; height: 37px; margin: 0; padding: 7px 9px; border-color: var(--line); background: var(--paper); color: var(--ink); font-size: 10px; }
+.studio-quality-field { grid-column: 1 / -1; }
+.studio-setting-group { min-width: 0; margin-top: 16px; }
+.studio-setting-label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: .03em; }
+.studio-setting-columns { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }
 .studio-palette-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-.studio-palette-options button { min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 8px; text-align: left; }
+.studio-palette-options button { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; text-align: left; }
 .studio-palette-options button:hover { background: var(--paper); }
 .studio-palette-options button[aria-pressed="true"] { border-color: var(--green); box-shadow: 0 0 0 1px var(--accent-glow); }
 .studio-palette-options button > span { display: flex; gap: 2px; }
 .studio-palette-options i { flex: 1; height: 8px; border-radius: 2px; }
 .studio-palette-options small { display: block; margin-top: 5px; color: var(--muted); font-size: 8px; }
-.studio-accent-options { display: flex; align-items: center; gap: 9px; }
-.studio-accent-options button { width: 19px; height: 19px; padding: 0; border: 4px solid var(--surface-1); border-radius: 50%; background: var(--studio-accent); box-shadow: 0 0 0 1px var(--line-strong); }
-.studio-accent-options button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
+.studio-core-options { display: grid; gap: 6px; }
+.studio-core-options button { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 8px; text-align: left; }
+.studio-core-options button:hover { background: var(--paper); color: var(--ink); }
+.studio-core-options button[aria-pressed="true"] { border-color: var(--green); background: var(--paper); color: var(--ink); box-shadow: 0 0 0 1px var(--accent-glow); }
+.studio-core-options i { width: 12px; height: 12px; border: 1px solid var(--line-strong); border-radius: 50%; }
+.studio-cross-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.studio-cross-options button { display: grid; place-items: center; min-width: 0; height: 31px; padding: 0; border: 1px solid var(--line); border-radius: 7px; }
+.studio-cross-options button:hover { background: var(--paper); }
+.studio-cross-options button[aria-pressed="true"] { border-color: var(--green); background: var(--paper); box-shadow: 0 0 0 1px var(--accent-glow); }
+.studio-cross-options i { width: 14px; height: 14px; border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 4px; }
 .studio-wear { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 16px; padding-top: 15px; border-top: 1px solid var(--line-soft); cursor: pointer; }
 .studio-wear > span { display: flex; flex-direction: column; min-width: 0; }
 .studio-wear strong { color: var(--ink); font-size: 10px; font-weight: 600; }
@@ -2750,34 +2753,33 @@ body.lighting-mode { background: var(--bg); }
 .studio-wear input:checked + i::after { transform: translateX(13px); }
 .studio-wear input:focus-visible + i { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 .studio-wear input:disabled + i { opacity: .4; }
-.lighting-tuning { padding-bottom: 13px; }
+.lighting-tuning { padding-bottom: 24px; border-bottom: 0; }
 .lighting-tuning.disabled { opacity: .72; }
 .lighting-panel .lighting-panel-head { align-items: center; margin: 0 0 9px; padding: 0; border: 0; }
 .lighting-panel .lighting-panel-head .btn-link { font-size: 9px; }
 .lighting-control-list { gap: 1px; }
-.lighting-control { grid-template-columns: minmax(0, 1fr) 44px; gap: 2px 10px; padding: 6px 3px; border: 0; border-radius: 0; }
+.lighting-control { grid-template-columns: minmax(0, 1fr) 44px; gap: 3px 10px; padding: 7px 3px; border: 0; border-radius: 0; }
 .lighting-control:focus-within { background: transparent; }
 .lighting-control > span { justify-content: space-between; }
-.lighting-control strong { font-size: 9px; }
-.lighting-control small { font-size: 7px; }
+.lighting-control strong { font-size: 10px; }
+.lighting-control small { font-size: 8px; }
 .lighting-control output { font-size: 8px; }
 .lighting-control input[type="range"] { height: 13px; }
 .studio-empty-note { padding: 24px 0; color: var(--muted); font-size: 9px; text-align: center; }
-.lighting-actions {
-  position: sticky;
-  bottom: 0;
+.lighting-save-controls {
+  display: flex;
   align-items: center;
-  flex: none;
   gap: 14px;
-  margin-top: auto;
-  padding: 16px 0 22px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid var(--line);
-  background: var(--surface-1);
 }
-.lighting-actions .lighting-save-status { flex: 1 1 auto; min-width: 0; margin: 0 !important; color: var(--muted); font-size: 8px; }
-.lighting-actions .btn { flex: none; padding: 10px 13px; }
+.lighting-save-controls .lighting-save-status { flex: 1 1 auto; min-width: 0; margin: 0 !important; color: var(--muted); font-size: 8px; }
+.lighting-save-controls .btn { flex: none; padding: 10px 13px; }
 .lighting-screen > .studio-confirm { position: absolute; border-radius: 0; }
 @media (max-width: 920px) {
+  body.lighting-mode .main-shell,
+  body.lighting-mode main { height: 100dvh; min-height: 0; overflow: hidden; }
   .lighting-screen { grid-template-columns: minmax(0, 1fr) 380px; }
   .lighting-panel { padding-inline: 22px; }
 }
@@ -2786,7 +2788,7 @@ body.lighting-mode { background: var(--bg); }
   body.lighting-mode main { height: auto; min-height: 100dvh; overflow: visible; }
   .lighting-screen { grid-template-columns: minmax(0, 1fr); grid-template-rows: 62dvh auto; height: auto; min-height: 100dvh; overflow: visible; }
   .lighting-panel { min-height: 600px; overflow: visible; border-top: 1px solid var(--line); border-left: 0; }
-  .lighting-actions { bottom: 0; }
+  .lighting-save-controls { align-items: stretch; flex-direction: column; }
 }
 .mode-options {
   display: grid;
@@ -3726,17 +3728,39 @@ body.timer-view {
   padding: 30px;
 }
 .cube-loading { position: relative; }
-.cube-loading::before { content: ""; position: absolute; inset: 0; z-index: 12; border-radius: inherit; background: var(--surface-2); pointer-events: none; }
-.cube-loading::after, .cube-throbber {
-  content: "";
+.cube-loading::before { content: ""; position: absolute; inset: 0; z-index: 12; border-radius: inherit; background: var(--surface-2); pointer-events: none; opacity: 1; transition: opacity .15s ease; }
+/* The sprite animates with transform, not background-position, so the
+   compositor keeps it moving while the main thread builds a cube. */
+.cube-throbber {
   display: block;
+  position: relative;
   width: 96px;
   height: 96px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity .15s ease;
+}
+.cube-throbber > i {
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1536px;
+  height: 1728px;
   background: url("loading-cube/frames.png") 0 0 / 1536px 1728px no-repeat;
   animation: cube-loading-frames calc(9.6s / var(--cube-loading-speed)) steps(1, end) infinite;
+  will-change: transform;
   pointer-events: none;
 }
-.cube-loading::after { position: absolute; z-index: 13; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+@starting-style {
+  .cube-loading::before,
+  .cube-throbber { opacity: 0; }
+}
+/* Slower fade out than in, so the hand-off to the cube is readable. */
+.cube-throbber.is-leaving { opacity: 0; transition-duration: .3s; }
+.cube-loading.cube-loading-out::before { opacity: 0; transition-duration: .3s; }
+.cube-loading > .cube-throbber { position: absolute; z-index: 13; left: 50%; top: 50%; margin: -48px 0 0 -48px; }
 .loading .cube-throbber { margin: 0 auto 8px; }
 .lighting-loading {
   min-height: 320px;
@@ -3748,7 +3772,7 @@ body.timer-view {
 }
 .lighting-loading .cube-throbber { margin-bottom: 8px; }
 @media (prefers-reduced-motion: reduce) {
-  .cube-loading::after, .cube-throbber { animation: none; }
+  .cube-throbber > i { animation: none; }
 }
 .focus-cube.cube-loading { width: min(360px, 23vw); height: min(280px, 33dvh); }
 
@@ -4533,7 +4557,7 @@ body.overview-view .rank-card .metric-value { font-size: clamp(18px, 2.6vh, 25px
 .scramble-reveal { display: inline-block; animation: move-type .33s both; animation-delay: var(--move-delay); }
 @keyframes move-type { from { opacity: 0; filter: blur(4px); transform: translateY(5px); } 60% { color: var(--green); } to { opacity: 1; filter: blur(0); transform: translateY(0); } }
 .cube-materialize { animation: cube-materialize .56s cubic-bezier(.16, 1, .3, 1) both; }
-@keyframes cube-materialize { from { opacity: 0; scale: .35; filter: blur(6px); } to { opacity: 1; scale: 1; filter: blur(0); } }
+@keyframes cube-materialize { from { opacity: 0; transform: scale(.35); } to { opacity: 1; transform: scale(1); } }
 .cube-death { animation: cube-death .14s cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
 @keyframes cube-death { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(72px); } }
 .guide-studio { padding: 18px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--accent-soft); display: flex; align-items: center; gap: 16px; }
@@ -4737,6 +4761,7 @@ body.focus-mode .timer-achievement.threshold, body.focus-mode .timer-achievement
   color: var(--ink);
 }
 .case-cube {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
@@ -4753,6 +4778,35 @@ body.focus-mode .timer-achievement.threshold, body.focus-mode .timer-achievement
 }
 .case-cube.is-orbiting .case-canvas {
   cursor: grabbing;
+}
+/* A hidden, laid-out stage the shared preview cube renders into for stills. */
+.cube-preview-host {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 320px;
+  height: 228px;
+  visibility: hidden;
+  pointer-events: none;
+}
+/* The one card being dragged borrows the live cube canvas. */
+.case-cube.hosting-live {
+  position: relative;
+}
+/* Hide the frozen still while the live cube is on top, or it shows through the
+   transparent WebGL canvas and ghosts behind the turn. It is re-blitted on release. */
+.case-cube.hosting-live .case-canvas {
+  visibility: hidden;
+}
+.case-cube.hosting-live .cube-studio-canvas {
+  border-radius: 9px;
+}
+.case-cube > .cube-throbber {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -48px 0 0 -48px;
+  transform: scale(.6);
 }
 .case-top {
   display: grid;
