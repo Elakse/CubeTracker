@@ -51,7 +51,7 @@
       "glossRough": 0.07
     },
     "speedcube": {
-      "exposure": 0.49,
+      "exposure": 0.38,
       "hemi": 0.75,
       "key": 0.72,
       "rim": 0.68,
@@ -79,6 +79,16 @@
       "env": 0.765,
       "gloss": 0.32,
       "glossRough": 0.1955
+    },
+    "og": {
+      "exposure": 0.53,
+      "hemi": 0.22,
+      "key": 1.14,
+      "rim": 2.42,
+      "fill": 0.83,
+      "env": 0.48,
+      "gloss": 0.08,
+      "glossRough": 0.12
     }
   },
   "studio": {

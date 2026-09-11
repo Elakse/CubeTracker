@@ -1,3 +1,5 @@
 videos/
 backups/
 node_modules/
+tools/__pycache__/
+.cubetracker.json.*.tmp

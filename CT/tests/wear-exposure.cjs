@@ -55,9 +55,10 @@ const server = http.createServer((req, res) => {
           cube.orbit(0, 0, 1);
         }, { model, quality: QUALITY, wear });
         if (wear) await page.locator('canvas[data-wear="loaded"]').waitFor({ timeout: 60000 });
+        if (wear && model === 'stickers') await page.locator('canvas[data-wear-sticker="loaded"]').waitFor({ timeout: 60000 });
         await page.waitForTimeout(400);
         const shot = await page.locator('#stage').screenshot();
-        reading[wear ? 'wear' : 'clean'] = await page.evaluate(async source => {
+        reading[wear ? 'wear' : 'clean'] = await page.evaluate(async ({ source, model }) => {
           const image = new Image();
           image.src = 'data:image/png;base64,' + source;
           await image.decode();
@@ -69,13 +70,16 @@ const server = http.createServer((req, res) => {
           // at the camera: the one the budget is written about.
           const linear = v => (v /= 255) <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
           let sum = 0, count = 0;
-          for (let y = height * .40; y < height * .60; y++) for (let x = width * .40; x < width * .60; x++) {
+          // Chipped vinyl exposes dark plastic inside the old sampling window.
+          // Measure surviving film in both images, not the area of missing film.
+          const inset = model === 'stickers' ? .45 : .40;
+          for (let y = height * inset; y < height * (1 - inset); y++) for (let x = width * inset; x < width * (1 - inset); x++) {
             const i = ((y | 0) * width + (x | 0)) * 4;
             sum += .2126 * linear(data[i]) + .7152 * linear(data[i + 1]) + .0722 * linear(data[i + 2]);
             count++;
           }
           return sum / count;
-        }, shot.toString('base64'));
+        }, { source: shot.toString('base64'), model });
       }
       const drift = (reading.wear - reading.clean) / reading.clean;
       worst = Math.max(worst, Math.abs(drift));

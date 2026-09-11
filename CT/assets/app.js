@@ -46,6 +46,9 @@
       "M15 6 17 9h4v10H3V9h4l2-3h6Zm1 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
     settings:
       "M4 6h9m5 0h2M4 12h3m5 0h8M4 18h9m5 0h2M15 4v4M9 10v4M15 16v4",
+    layers: "m12 3 9 4.5-9 4.5-9-4.5L12 3Zm9 9-9 4.5L3 12m18 4.5-9 4.5-9-4.5",
+    star: "m12 3.6 2.6 5.4 5.9.8-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9L5.5 9.8l5.9-.8L12 3.6Z",
+    shuffle: "M3 6h4l10 12h4M17 3l4 3-4 3M3 18h4l3-3.6M14 8.6 17 6M17 21l4-3-4-3",
   };
   const icon = (name) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name] || paths.cube}"/></svg>`;
@@ -66,7 +69,7 @@
   const STORE = "cubetracker.workspace.v2",
     PREF = "cubetracker.preferences.v2";
   const CUBE_PALETTES = {
-    classic: { label: "Classic", detail: "Familiar and balanced", colors: Object.fromEntries(Object.entries(C.FACES).map(([f, v]) => [f, v.color])) },
+    classic: { label: "Washed", detail: "Familiar and balanced", colors: Object.fromEntries(Object.entries(C.FACES).map(([f, v]) => [f, v.color])) },
     vivid: { label: "Vivid", detail: "Bright competition colors", colors: { U: "#fafcff", R: "#eb3046", F: "#16bd6b", D: "#ffdb19", L: "#ff821c", B: "#2474ef" } },
   };
   // Graphics quality trades fidelity for frame time. Only the 3D models read
@@ -85,15 +88,91 @@
     stickers: { label: "Stickers", detail: "Thin stickers · satin black plastic" },
     speedcube: { label: "Speedcube", detail: "Sculpted, stickerless pieces" },
     uv: { label: "UV Speedcube", detail: "The same pieces under a cured UV coat" },
+    og: { label: "OG Speedcube", detail: "Classic vinyl stickers on sculpted plastic" },
   };
   // What the internals are moulded from, seen through the gaps and while a
   // layer turns. Colour only: the plastic's finish belongs to the renderer,
   // which keys CORE_FINISH off these same ids.
   const CUBE_CORES = {
-    white: { label: "White", swatch: "#dcddd6" },
+    white: { label: "White", swatch: "#4a4d50" },
     black: { label: "Black", swatch: "#16181b" },
     green: { label: "Green", swatch: "#1d7a45" },
   };
+  // Choosing a cross fixes only which centre points down. The remaining spin
+  // is deterministic but carries no user-facing meaning.
+  const CUBE_CROSSES = {
+    U: { label: "White", rotation: "x2" },
+    D: { label: "Yellow", rotation: "" },
+    F: { label: "Green", rotation: "x'" },
+    B: { label: "Blue", rotation: "x" },
+    L: { label: "Orange", rotation: "z'" },
+    R: { label: "Red", rotation: "z" },
+  };
+  const vectorDot = (a, b) => a.reduce((sum, value, i) => sum + value * b[i], 0);
+  function rotateForCross(vector, face, inverse = false) {
+    const token = CUBE_CROSSES[face]?.rotation;
+    if (!token) return [...vector];
+    const spec = C.moveSpec(token);
+    return C.rotate(vector, spec.axis, spec.angle * (inverse ? -1 : 1)).map(Math.round);
+  }
+  function orientedStickers(stickers, face) {
+    if (!CUBE_CROSSES[face]?.rotation) return stickers;
+    return stickers.map(sticker => {
+      const shown = { ...sticker };
+      for (const key of ["p", "n", "right", "down"])
+        shown[key] = rotateForCross(sticker[key], face);
+      return shown;
+    });
+  }
+  function orientedMoveSpec(spec, face) {
+    if (!spec || !CUBE_CROSSES[face]?.rotation) return spec;
+    return {
+      ...spec,
+      axis: rotateForCross(spec.axis, face),
+      select: position => spec.select(rotateForCross(position, face, true)),
+    };
+  }
+  function faceletsFromStickers(stickers) {
+    const result = {};
+    for (const [face, basis] of Object.entries(C.FACES)) {
+      result[face] = Array(9);
+      for (const sticker of stickers)
+        if (vectorDot(sticker.n, basis.n) === 1)
+          result[face][(vectorDot(sticker.p, basis.down) + 1) * 3 + vectorDot(sticker.p, basis.right) + 1] = sticker.face;
+    }
+    return result;
+  }
+  function crossQuaternion(face) {
+    const token = CUBE_CROSSES[face]?.rotation;
+    if (!token) return [0, 0, 0, 1];
+    const { axis, angle } = C.moveSpec(token),
+      sine = Math.sin(angle / 2);
+    return [axis[0] * sine, axis[1] * sine, axis[2] * sine, Math.cos(angle / 2)];
+  }
+  function multiplyQuaternion(a, b) {
+    const [ax, ay, az, aw] = a,
+      [bx, by, bz, bw] = b;
+    return [
+      aw * bx + ax * bw + ay * bz - az * by,
+      aw * by - ax * bz + ay * bw + az * bx,
+      aw * bz + ax * by - ay * bx + az * bw,
+      aw * bw - ax * bx - ay * by - az * bz,
+    ];
+  }
+  function crossTransitionSpec(from, to) {
+    const start = crossQuaternion(from),
+      end = crossQuaternion(to),
+      inverseStart = [-start[0], -start[1], -start[2], start[3]],
+      delta = multiplyQuaternion(end, inverseStart);
+    if (delta[3] < 0) for (let i = 0; i < 4; i++) delta[i] *= -1;
+    const length = Math.hypot(delta[0], delta[1], delta[2]);
+    if (length < 1e-7) return null;
+    return {
+      axis: delta.slice(0, 3).map(value => value / length),
+      angle: 2 * Math.atan2(length, Math.max(-1, Math.min(1, delta[3]))),
+      select: () => true,
+    };
+  }
   // The standard preview keeps its own reset angle; all realistic 3D models
   // share the user's preferred orbit captured from the live cube preview.
   const CUBE_ORBITS = {
@@ -138,17 +217,24 @@
       cubeEnvironment: "studio",
       cubeWear: false,
       cubeCore: "black",
+      cubeCross: "D",
       scrambleAnimation: true,
       pressToStart: false,
+      mouseClickStart: true,
       videoRecording: false,
       videoRecordInspection: true,
       cameraDeviceId: "",
       videoResolution: "720",
       videoFps: 30,
       videoMaxSeconds: 0,
+      trainerSet: null,
+      trainerView: "3d",
+      trainerSpeed: 72,
+      trainerReps: 12,
+      trainerMode: "random",
       version: 2,
     },
-    state = { categories: [], revision: 0 },
+    state = { categories: [], algSets: null, revision: 0 },
     view = "timer",
     server = false,
     saveChain = Promise.resolve(),
@@ -168,6 +254,9 @@
     scene = null,
     drawerScene = null,
     appearanceScene = null,
+    appearanceSuspendedMainCube = false,
+    appearanceLoadToken = 0,
+    appearanceSuspension = Promise.resolve(),
     lightingScene = null,
     lightingState = null,
     lightingReturnView = "timer",
@@ -179,6 +268,12 @@
     sceneIdleHandle = 0,
     panelCount = 0,
     libraryCount = 0,
+    trainerSelection = new Set(),
+    trainerThumbs = [],
+    trainerObserver = null,
+    trainerResizeObserver = null,
+    caseDrawer = null,
+    training = null,
     keepPanel = false;
   const PANEL_BATCH = 60;
   const LIBRARY_BATCH = 60;
@@ -188,6 +283,7 @@
     1080: { label: "1080p", width: 1920, height: 1080, bitrate: 2800000 },
   };
   const VIDEO_FPS = [24, 30, 60];
+  const TIMER_RESTART_COOLDOWN_MS = 1000;
   let currentScramble = C.scramble(),
     scrambleSource = "practice",
     scramblePending = false,
@@ -203,6 +299,7 @@
       penalty: "",
       elapsed: 0,
       blockedRelease: false,
+      restartAt: 0,
     };
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let motion = null, recordCache = null, demoRaf = 0, demoEffect = "sub-10";
@@ -246,11 +343,13 @@
   if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "studio";
   if (typeof pref.cubeWear !== "boolean") pref.cubeWear = false;
   if (!Object.hasOwn(CUBE_CORES, pref.cubeCore)) pref.cubeCore = "black";
+  if (!Object.hasOwn(CUBE_CROSSES, pref.cubeCross)) pref.cubeCross = "D";
   // A first guess, not a verdict. Machines that advertise little get the safe
   // level, and nobody is opted into the expensive ones without choosing them.
   if (!Object.hasOwn(CUBE_QUALITY, pref.cubeQuality))
     pref.cubeQuality = matchMedia("(pointer: coarse)").matches || (navigator.hardwareConcurrency || 4) <= 4 ? "low" : "balanced";
   if (typeof pref.scrambleAnimation !== "boolean") pref.scrambleAnimation = true;
+  if (typeof pref.mouseClickStart !== "boolean") pref.mouseClickStart = true;
   if (typeof pref.videoRecording !== "boolean") pref.videoRecording = false;
   if (typeof pref.videoRecordInspection !== "boolean") pref.videoRecordInspection = true;
   if (typeof pref.cameraDeviceId !== "string") pref.cameraDeviceId = "";
@@ -317,6 +416,75 @@
       state.categories[0] ||
       null
     );
+  }
+  const algSets = () => state.algSets || [];
+  const activeSet = () =>
+    algSets().find((set) => set.id === pref.trainerSet) || algSets()[0] || null;
+  const emptyStats = () => ({
+    attempts: 0,
+    best: null,
+    total: 0,
+    last: null,
+    lastDate: null,
+  });
+  const favouriteAlg = (entry) =>
+    entry.algs.find((alg) => alg.id === entry.favoriteId) || entry.algs[0];
+  const findCase = (id) => activeSet()?.cases.find((entry) => entry.id === id);
+  function newCase(name, groupId, moves) {
+    const algs = moves.map((text) => ({ id: uid(), moves: text }));
+    return {
+      id: uid(),
+      name,
+      groupId,
+      algs,
+      favoriteId: algs[0].id,
+      stats: emptyStats(),
+    };
+  }
+  // The preloaded sets are instantiated once, so ids are stable and everything
+  // the user adds afterwards lives beside them. A set the user deletes stays
+  // deleted; it can be brought back from the Trainer's set menu.
+  function seedAlgSets() {
+    if (typeof CT_TRAINER === "undefined") return false;
+    if (!state.algSets) {
+      state.algSets = CT_TRAINER.SETS.map(buildSeedSet);
+      return true;
+    }
+    // Upgrade a user-created empty placeholder when a matching built-in ships.
+    // This is intentionally narrower than auto-adding every missing set: a
+    // built-in the user deliberately deleted must stay deleted.
+    let changed = false;
+    for (const seed of CT_TRAINER.SETS) {
+      if (algSets().some((set) => set.builtin === seed.builtin)) continue;
+      const placeholder = algSets().find(
+        (set) =>
+          !set.builtin &&
+          !set.groups.length &&
+          !set.cases.length &&
+          set.name.toLowerCase() === seed.name.toLowerCase(),
+      );
+      if (!placeholder) continue;
+      const completed = buildSeedSet(seed);
+      Object.assign(placeholder, completed, { id: placeholder.id });
+      changed = true;
+    }
+    return changed;
+  }
+  function buildSeedSet(seed) {
+    const set = {
+      id: uid(),
+      name: seed.name,
+      builtin: seed.builtin || null,
+      groups: [],
+      cases: [],
+    };
+    for (const group of seed.groups) {
+      const created = { id: uid(), name: group.name };
+      set.groups.push(created);
+      for (const entry of group.cases)
+        set.cases.push(newCase(entry.name, created.id, entry.algs));
+    }
+    return set;
   }
   function solves() {
     return active()?.solves || [];
@@ -452,7 +620,8 @@
     }
     const enqueue = () => {
       deferredSaveHandle = 0;
-      const snapshot = state.categories;
+      const snapshot = state.categories,
+        sets = state.algSets;
       saveChain = saveChain.then(async () => {
         try {
           const res = await fetch("/api/library", {
@@ -461,11 +630,15 @@
             body: JSON.stringify({
               revision: state.revision,
               categories: snapshot,
+              algSets: sets,
             }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Could not save CSV files.");
           state.revision = data.revision;
+          // The response echoes the sets back, but adopting them would undo an
+          // edit made while this save was in flight. The local copy is the one
+          // that matters; the next save carries it.
           for (const c of state.categories)
             c.file = data.categories.find((d) => d.id === c.id)?.file || c.file;
           writeError = false;
@@ -733,7 +906,7 @@ ${rankCard(status)}
     if (max === min) max++;
     const x = (i) => l + (i / Math.max(1, data.length - 1)) * (w - l - r),
       y = (v) => t + (1 - (v - min) / (max - min)) * (h - t - b);
-    let svg = `<svg class="chart ${height < 120 ? "mini-chart" : ""}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="${kind === "goal" ? `Rolling percentage under ${pref.target} seconds across ${n} solves` : kind === "pb" ? "Personal best progression" : "Solve times and rolling average"}">`;
+    let svg = `<svg class="chart ${height < 120 ? "mini-chart" : ""}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="${kind === "goal" ? `Rolling percentage under ${pref.target} seconds across ${n} solves` : kind === "pb" ? "Personal best progression" : "Solve times, rolling average, and trendline"}">`;
     for (let i = 0; i <= ticks; i++) {
       const v = min + ((max - min) * i) / ticks;
       svg += `<line class="gridline" x1="${l}" x2="${w - r}" y1="${y(v)}" y2="${y(v)}"/><text x="${l - 9}" y="${y(v) + 3}" text-anchor="end">${kind === "goal" ? Math.round(v) + "%" : fmt(v, 0)}</text>`;
@@ -814,6 +987,35 @@ ${rankCard(status)}
         }
       }
     }
+    if (kind === "trend") {
+      // Fit the trendline to the individual completed solves, not the rolling
+      // average, so it shows the direction of the underlying solve times.
+      let count = 0,
+        sx = 0,
+        sy = 0,
+        sxx = 0,
+        sxy = 0,
+        first = -1,
+        last = -1;
+      for (let i = 0; i < data.length; i++) {
+        const v = C.value(data[i]);
+        if (!Number.isFinite(v)) continue;
+        if (first < 0) first = i;
+        last = i;
+        count++;
+        sx += i;
+        sy += v;
+        sxx += i * i;
+        sxy += i * v;
+      }
+      const denom = count * sxx - sx * sx;
+      if (count > 2 && denom) {
+        const slope = (count * sxy - sx * sy) / denom,
+          intercept = (sy - slope * sx) / count,
+          at = (i) => Math.max(min, Math.min(max, intercept + slope * i));
+        svg += `<path d="M${x(first).toFixed(2)},${y(at(first)).toFixed(2)}L${x(last).toFixed(2)},${y(at(last)).toFixed(2)}" fill="none" style="stroke:var(--chart-trend)" stroke-width="1.7" stroke-dasharray="6 5" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+      }
+    }
     for (let i = 0; i <= ticks; i++) {
       const idx = Math.round((i / ticks) * (data.length - 1));
       svg += `<text x="${x(idx)}" y="${h - 5}" text-anchor="${i === 0 ? "start" : i === ticks ? "end" : "middle"}">${sameDay || shortDate(data[idx]) === "Unknown date" ? "#" + (idx + 1) : shortDate(data[idx])}</text>`;
@@ -841,7 +1043,7 @@ ${rankCard(status)}
       : scrambleSource === "practice"
         ? "PRACTICE SCRAMBLE"
         : "";
-    return `<section class="panel cube-panel"><div class="panel-heading"><div><h2>Scramble</h2>${label ? `<p>${label}</p>` : ""}</div></div><div id="cube-mount"></div><div class="cube-bottom"><p class="scramble-mini" data-copyable>${esc(currentScramble)}</p><button class="btn btn-dark" data-action="practice">${icon("play")}Timer ${icon("arrow")}</button></div></section>`;
+    return `<section class="panel cube-panel"><div class="panel-heading"><div><h2>Scramble</h2>${label ? `<p>${label}</p>` : ""}</div></div><div id="cube-mount"></div><div class="cube-bottom"><p class="scramble-mini" data-copyable>${esc(currentScramble)}</p><button class="btn btn-dark" data-action="practice">${icon("play")}Solve ${icon("arrow")}</button></div></section>`;
   }
   function activity(data) {
     const dayCounts = new Map();
@@ -870,12 +1072,13 @@ ${rankCard(status)}
         if (day < 1 || day > days) { cells += '<span class="calendar-blank"></span>'; continue; }
         const date = new Date(start.getFullYear(), start.getMonth(), day, 12), n = dayCounts.get(localDay(date)) || 0;
         const future = date > last, today = localDay(date) === localDay(last);
-        const label = `${date.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })} · ${future ? "Upcoming" : `${n.toLocaleString()} solves`}`;
-        cells += `<button class="calendar-day heat-cell${future ? " future" : ""}${today ? " today" : ""}" data-level="${n && !future ? Math.max(1, Math.ceil(Math.sqrt(n / max) * 4)) : 0}" ${future ? "disabled" : ""} aria-label="${label}" data-day-info="${label}" ${today ? 'aria-current="date"' : ""}><span>${day}</span></button>`;
+        const dateLabel = date.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" });
+        const label = `${dateLabel} · ${future ? "Upcoming" : `${n.toLocaleString()} solves`}`;
+        cells += `<button class="calendar-day heat-cell${future ? " future" : ""}${today ? " today" : ""}" data-level="${n && !future ? Math.max(1, Math.ceil(Math.sqrt(n / max) * 4)) : 0}" ${future ? "disabled" : ""} aria-label="${label}" data-day-info="${label}" data-day-date="${esc(dateLabel)}" data-day-count="${n}" aria-expanded="false" aria-controls="activity-day-popover" ${today ? 'aria-current="date"' : ""}><span>${day}</span></button>`;
       }
       months += `<div class="activity-month"><h3>${start.toLocaleDateString("en", { month: "short" })}<span>${start.getFullYear()}</span></h3><div class="calendar-weekdays" aria-hidden="true">${["M", "T", "W", "T", "F", "S", "S"].map(x => `<span>${x}</span>`).join("")}</div><div class="month-grid">${cells}</div></div>`;
     }
-    return `<section class="panel panel-pad activity-panel"><div class="panel-heading"><div><h2>Activity</h2><p>${activeDays} active days · ${total.toLocaleString()} solves · ${countMonths} months</p></div><div class="heat-legend"><span>Less</span>${[0,1,2,3,4].map(x => `<i class="heat-cell" data-level="${x}"></i>`).join("")}<span>More</span></div></div><div class="activity-months" style="--months:${countMonths}">${months}</div><div class="activity-day-info" aria-live="polite">Select a day to see its activity <span>Today is outlined</span></div></section>`;
+    return `<section class="panel panel-pad activity-panel"><div class="panel-heading"><div><h2>Activity</h2><p>${activeDays} active days · ${total.toLocaleString()} solves · ${countMonths} months</p></div><div class="heat-legend"><span>Less</span>${[0,1,2,3,4].map(x => `<i class="heat-cell" data-level="${x}"></i>`).join("")}<span>More</span></div></div><div class="activity-months" style="--months:${countMonths}">${months}</div><div id="activity-day-popover" class="activity-popover" role="status" hidden></div><div class="activity-day-info">Click a day to see its activity <span>Today is outlined</span></div></section>`;
   }
   function overview() {
     const a = rangeSolves();
@@ -885,7 +1088,7 @@ ${rankCard(status)}
         `${solves().length ? "" : '<button class="btn btn-quiet" data-action="demo">Load demo data</button>'}${rangeSelect()}`,
       ) +
       metrics(a) +
-      `<div class="main-grid"><section class="panel panel-pad"><div class="panel-heading"><h2>Solve times</h2><div class="segmented">${["ao5", "ao12", "ao100"].map((x) => `<button class="${pref.trend === x ? "active" : ""}" data-trend="${x}">${x}</button>`).join("")}</div></div><div id="trend-body"><div class="legend"><span><i></i>${pref.trend}</span><span><i class="single"></i>Individual solves</span></div>${chart(a)}</div><div class="chart-caption"><span>${a.length ? `${a.length.toLocaleString()} solves · chronological order` : "No solves yet"}</span><button class="btn-link" data-view="insights">Explore ${icon("arrow-up-right")}</button></div></section>${cubePanel()}</div>${activity(solves())}`
+      `<div class="main-grid"><section class="panel panel-pad"><div class="panel-heading"><h2>Solve times</h2><div class="segmented">${["ao5", "ao12", "ao100"].map((x) => `<button class="${pref.trend === x ? "active" : ""}" data-trend="${x}">${x}</button>`).join("")}</div></div><div id="trend-body"><div class="legend"><span><i></i>${pref.trend}</span><span><i class="single"></i>Individual solves</span><span><i class="trend"></i>Trendline</span></div>${chart(a)}</div><div class="chart-caption"><span>${a.length ? `${a.length.toLocaleString()} solves · chronological order` : "No solves yet"}</span><button class="btn-link" data-view="insights">Explore ${icon("arrow-up-right")}</button></div></section>${cubePanel()}</div>${activity(solves())}`
     );
   }
   function panelStats() {
@@ -1213,6 +1416,780 @@ ${rankCard(status)}
       `<div class="insights-grid">${goalPanel(a, true)}<section class="panel panel-pad"><div class="panel-heading"><div><h2>Distribution</h2><p>Completed solves only</p></div><span class="chip">${s.valid} solves</span></div>${histogram(a)}<div class="insight-facts"><div><span>Median</span><strong>${fmt(s.median)}</strong></div><div><span>Std. deviation</span><strong>${fmt(s.sd)}</strong></div><div><span>Completion</span><strong>${a.length ? ((s.valid / a.length) * 100).toFixed(1) + "%" : "—"}</strong></div></div></section><section class="panel panel-pad"><div class="panel-heading"><div><h2>Personal best over time</h2></div>${icon("trophy")}</div>${chart(a, "pb", 220)}<div class="chart-caption"><span>Best single</span><strong>${fmt(s.best)}${s.best != null ? " seconds" : ""}</strong></div></section><section class="panel panel-pad"><div class="panel-heading"><div><h2>Solves by weekday</h2></div>${icon("calendar")}</div><div class="bar-list">${groups.map((g, i) => `<div class="bar-row"><span>${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i]}</span><div class="bar-track"><div style="width:${(g.length / top) * 100}%"></div></div><strong>${g.length}</strong></div>`).join("")}</div><p class="chart-note">Local dates. Solves without a date are excluded.</p></section><section class="panel panel-pad"><div class="panel-heading"><div><h2>Best averages</h2></div>${icon("target")}</div><table style="margin-top:17px"><thead><tr><th style="padding-left:0">Window</th><th>Current</th><th>Best in range</th></tr></thead><tbody>${[5, 12, 100].map((n) => `<tr><td style="padding-left:0">ao${n}</td><td class="time-cell">${fmt(C.average(a, n))}</td><td class="time-cell">${fmt(bestAverage(a, n))}</td></tr>`).join("")}</tbody></table><div class="quality-note">Averages trim the fastest and slowest 5%, rounded up. DNFs stay in the window.</div></section></div>${activity(solves(), 26)}`
     );
   }
+  // ---------------------------------------------------------------- Trainer
+  // A case is whatever its algorithm solves: the cube on a card is the solved
+  // cube with that algorithm run backwards, so a card can never show a case its
+  // algorithm does not answer.
+  function thumbRotate(v, pitch, yaw) {
+    const ry = (yaw * Math.PI) / 180,
+      rx = (-pitch * Math.PI) / 180,
+      cy = Math.cos(ry),
+      sy = Math.sin(ry),
+      cx = Math.cos(rx),
+      sx = Math.sin(rx),
+      x = v[0] * cy + v[2] * sy,
+      z = -v[0] * sy + v[2] * cy;
+    return [x, v[1] * cx - z * sx, v[1] * sx + z * cx];
+  }
+  function drawCaseThumb(mount) {
+    const state = mount._caseThumb,
+      canvas = state?.canvas;
+    if (!canvas || !canvas.isConnected) return;
+    const width = Math.max(1, mount.clientWidth || 160),
+      height = Math.max(1, mount.clientHeight || 114),
+      ratio = Math.min(devicePixelRatio || 1, 2),
+      pixelWidth = Math.round(width * ratio),
+      pixelHeight = Math.round(height * ratio);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+    const ctx = canvas.getContext("2d"),
+      camera = 18,
+      project = (point) => {
+        const p = thumbRotate(point, state.pitch, state.yaw),
+          perspective = camera / (camera - p[2]);
+        return { x: p[0] * perspective, y: -p[1] * perspective, z: p[2] };
+      },
+      same = (a, b) => a.every((value, i) => value === b[i]),
+      faces = [];
+    for (const face of Object.values(C.FACES)) {
+      const normal = thumbRotate(face.n, state.pitch, state.yaw);
+      if (normal[2] <= .001) continue;
+      const faceCenter = face.n.map((value) => value * 1.51),
+        faceCorner = (right, down) => faceCenter.map(
+          (value, i) => value + face.right[i] * right * 1.5 + face.down[i] * down * 1.5,
+        ),
+        points = [faceCorner(-1, -1), faceCorner(1, -1), faceCorner(1, 1), faceCorner(-1, 1)].map(project),
+        stickers = state.cube.stickers
+          .filter((sticker) => same(sticker.n, face.n))
+          .map((sticker) => {
+            const center = sticker.p.map((value, i) => value + sticker.n[i] * .515),
+              corner = (right, down) => center.map(
+                (value, i) => value + sticker.right[i] * right * .425 + sticker.down[i] * down * .425,
+              ),
+              stickerPoints = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)].map(project);
+            return { points: stickerPoints, color: state.colors[sticker.face] };
+          });
+      faces.push({ points, stickers, depth: points.reduce((sum, p) => sum + p.z, 0) / 4 });
+    }
+    faces.sort((a, b) => a.depth - b.depth);
+    const outer = faces.flatMap((face) => face.points),
+      minX = Math.min(...outer.map((p) => p.x)),
+      maxX = Math.max(...outer.map((p) => p.x)),
+      minY = Math.min(...outer.map((p) => p.y)),
+      maxY = Math.max(...outer.map((p) => p.y)),
+      padding = Math.max(9, Math.min(width, height) * .085),
+      fit = Math.min((width - padding * 2) / (maxX - minX), (height - padding * 2) / (maxY - minY)),
+      baseScale = state.fitWidth === width && state.fitHeight === height ? state.baseScale : fit,
+      scale = Math.min(baseScale, fit),
+      offsetX = (width - (minX + maxX) * scale) / 2,
+      offsetY = (height - (minY + maxY) * scale) / 2,
+      screenPoints = (points) => points.map((p) => ({ x: offsetX + p.x * scale, y: offsetY + p.y * scale })),
+      path = (points, radius = 0) => {
+        const p = screenPoints(points);
+        ctx.beginPath();
+        if (!radius) {
+          ctx.moveTo(p[0].x, p[0].y);
+          for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+        } else {
+          for (let i = 0; i < p.length; i++) {
+            const previous = p[(i + p.length - 1) % p.length],
+              current = p[i],
+              next = p[(i + 1) % p.length],
+              incoming = { x: current.x + (previous.x - current.x) * radius, y: current.y + (previous.y - current.y) * radius },
+              outgoing = { x: current.x + (next.x - current.x) * radius, y: current.y + (next.y - current.y) * radius };
+            if (!i) ctx.moveTo(incoming.x, incoming.y);
+            else ctx.lineTo(incoming.x, incoming.y);
+            ctx.quadraticCurveTo(current.x, current.y, outgoing.x, outgoing.y);
+          }
+        }
+        ctx.closePath();
+      },
+      style = getComputedStyle(mount),
+      plastic = style.getPropertyValue("--sticker-line").trim() || "#28362f",
+      gloss = style.getPropertyValue("--sticker-gloss").trim() || "#ffffff19";
+    state.baseScale = baseScale;
+    state.fitWidth = width;
+    state.fitHeight = height;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.lineJoin = "round";
+    for (const face of faces) {
+      path(face.points);
+      ctx.fillStyle = plastic;
+      ctx.fill();
+      for (const sticker of face.stickers) {
+        path(sticker.points, .13);
+        ctx.fillStyle = sticker.color;
+        ctx.fill();
+        ctx.lineWidth = .7;
+        ctx.strokeStyle = gloss;
+        ctx.stroke();
+      }
+    }
+    canvas.dataset.pitch = state.pitch.toFixed(3);
+    canvas.dataset.yaw = state.yaw.toFixed(3);
+  }
+  function queueCaseThumbDraw(mount) {
+    const state = mount._caseThumb;
+    if (!state || state.raf) return;
+    state.raf = requestAnimationFrame(() => {
+      state.raf = 0;
+      drawCaseThumb(mount);
+    });
+  }
+  function clearCaseThumb(mount) {
+    if (mount._caseThumb?.raf) cancelAnimationFrame(mount._caseThumb.raf);
+    mount._caseThumb = null;
+    mount.replaceChildren();
+  }
+  function bindCaseThumbOrbit(mount) {
+    mount.addEventListener("pointerdown", (event) => {
+      const state = mount._caseThumb;
+      if (!state || mount.dataset.mode !== "3d") return;
+      mount.setPointerCapture(event.pointerId);
+      state.drag = { x: event.clientX, y: event.clientY, moved: false };
+      mount.classList.add("is-orbiting");
+    });
+    mount.addEventListener("pointermove", (event) => {
+      const state = mount._caseThumb;
+      if (!state?.drag) return;
+      const dx = event.clientX - state.drag.x,
+        dy = event.clientY - state.drag.y;
+      if (Math.hypot(dx, dy) > 2) state.drag.moved = true;
+      state.yaw += dx * .55;
+      state.pitch = Math.max(-85, Math.min(85, state.pitch - dy * .45));
+      state.drag.x = event.clientX;
+      state.drag.y = event.clientY;
+      queueCaseThumbDraw(mount);
+    });
+    const finish = (cancelled = false) => {
+      const state = mount._caseThumb;
+      if (!state?.drag) return;
+      if (!cancelled && state.drag.moved) mount.dataset.suppressOpen = "true";
+      state.drag = null;
+      mount.classList.remove("is-orbiting");
+    };
+    mount.addEventListener("pointerup", () => finish());
+    mount.addEventListener("pointercancel", () => finish(true));
+  }
+  function caseThumb(mount, setupAlg, mode) {
+    if (mount._caseThumb?.raf) cancelAnimationFrame(mount._caseThumb.raf);
+    mount._caseThumb = null;
+    // Hold the solved cube first, then execute the setup in that frame. Doing
+    // this in the opposite order moves a white-top PLL to the bottom instead
+    // of creating the same case on the newly selected upper layer.
+    const cube = new C.Cube().apply([CUBE_CROSSES[pref.cubeCross].rotation, setupAlg].filter(Boolean).join(" ")),
+      colors = CUBE_PALETTES[pref.cubePalette].colors;
+    if (mode === "top") {
+      const f = cube.facelets(),
+        cell = (face, i) =>
+          `<span style="background:${colors[f[face][i]]}"></span>`,
+        gap = '<span class="case-gap"></span>';
+      // Read as an algorithm sheet: the up face with the band of side stickers
+      // around it, back at the top.
+      mount.innerHTML = `<span class="case-top">${[
+        gap, cell("B", 2), cell("B", 1), cell("B", 0), gap,
+        cell("L", 0), cell("U", 0), cell("U", 1), cell("U", 2), cell("R", 2),
+        cell("L", 1), cell("U", 3), cell("U", 4), cell("U", 5), cell("R", 1),
+        cell("L", 2), cell("U", 6), cell("U", 7), cell("U", 8), cell("R", 0),
+        gap, cell("F", 0), cell("F", 1), cell("F", 2), gap,
+      ].join("")}</span>`;
+      return;
+    }
+    const orbit = CUBE_ORBITS.standard;
+    // Card previews are deliberately not CubeScene instances. One small 2D
+    // canvas projects the cube's real sticker geometry and redraws only while
+    // that card is being dragged, avoiding 54 composited DOM layers per card.
+    mount.innerHTML = '<canvas class="case-canvas" aria-hidden="true"></canvas>';
+    mount._caseThumb = {
+      canvas: $("canvas", mount),
+      cube,
+      colors,
+      pitch: orbit.pitch,
+      yaw: orbit.yaw,
+      drag: null,
+      raf: 0,
+    };
+    drawCaseThumb(mount);
+  }
+  const groupCases = (set, groupId) =>
+    groupId
+      ? set.cases.filter((entry) => entry.groupId === groupId)
+      : set.cases.filter(
+          (entry) => !set.groups.some((group) => group.id === entry.groupId),
+        );
+  function trainerHeading(set) {
+    const sets = algSets(),
+      selector = `<select class="period-select" aria-label="Algorithm set" data-control="alg-set">${sets
+        .map(
+          (s) =>
+            `<option value="${esc(s.id)}"${s.id === set?.id ? " selected" : ""}>${esc(s.name)}</option>`,
+        )
+        .join("")}<option value="__new__">+ New alg set…</option></select>`,
+      modes = `<div class="segmented" role="group" aria-label="Case preview">${[
+        ["3d", "3D"],
+        ["top", "Top"],
+      ]
+        .map(
+          ([id, label]) =>
+            `<button class="${pref.trainerView === id ? "active" : ""}" data-trainer-view="${id}" aria-pressed="${pref.trainerView === id}">${label}</button>`,
+        )
+        .join("")}</div>`;
+    return `<div class="page-heading"><h1>Trainer</h1><div class="heading-actions">${set ? `<button class="btn btn-quiet" data-action="new-group">${icon("plus")}New group</button><button class="btn btn-quiet" data-action="new-case" data-group="">${icon("plus")}New case</button>` : ""}${selector}${set ? modes + `<button class="icon-btn" data-action="manage-set" aria-label="Manage this set" title="Manage this set">${icon("more")}</button>` : ""}</div></div>`;
+  }
+  function caseCard(entry) {
+    const picked = trainerSelection.has(entry.id);
+    return `<article class="case-card${picked ? " picked" : ""}" data-case="${esc(entry.id)}"><label class="case-check"><input type="checkbox" data-case-check="${esc(entry.id)}"${picked ? " checked" : ""} aria-label="Select ${esc(entry.name)}"></label><button class="case-open" data-case-open="${esc(entry.id)}"><span class="case-name">${esc(entry.name)}</span><span class="case-cube" data-case-thumb="${esc(entry.id)}" data-mode="${pref.trainerView}"></span><span class="case-alg">${esc(favouriteAlg(entry).moves)}</span></button></article>`;
+  }
+  function caseGroup(group, cases) {
+    const picked = cases.filter((entry) => trainerSelection.has(entry.id)).length;
+    return `<section class="case-group"><div class="case-group-head"><label class="case-check"><input type="checkbox" data-group-check="${esc(group.id)}"${cases.length && picked === cases.length ? " checked" : ""} aria-label="Select every case in ${esc(group.name)}"></label><h2>${esc(group.name)}</h2><span class="case-group-count">${cases.length}</span><button class="icon-btn case-group-add" data-action="new-case" data-group="${esc(group.id)}" aria-label="Add a case to ${esc(group.name)}" title="Add a case">${icon("plus")}</button></div>${cases.length ? `<div class="case-grid">${cases.map(caseCard).join("")}</div>` : '<p class="case-group-empty">No cases in this group yet.</p>'}</section>`;
+  }
+  function trainBar() {
+    const n = trainerSelection.size;
+    return `<div class="train-bar"${n < 2 ? " hidden" : ""}><span class="train-bar-count"><strong>${n}</strong> selected</span><button class="btn btn-quiet" data-action="clear-selection">Clear</button><button class="btn btn-dark" data-action="train">${icon("play")}Train</button></div>`;
+  }
+  function trainerTools() {
+    const set = activeSet();
+    return `<div class="case-tools"><button class="btn btn-quiet" data-action="select-all"${set?.cases.length ? "" : " disabled"}>${icon("check")}Select all</button></div>`;
+  }
+  function trainer() {
+    const set = activeSet();
+    if (!set)
+      return (
+        trainerHeading(null) +
+        `<div class="empty-state"><strong>No algorithm sets yet</strong>A set holds the cases you want to drill, each with the algorithms you use for it.<br><button class="btn btn-dark" data-action="new-set">${icon("plus")}New alg set</button>${typeof CT_TRAINER !== "undefined" ? ` <button class="btn btn-quiet" data-action="restore-sets">${icon("reset")}Restore built-in sets</button>` : ""}</div>`
+      );
+    const loose = groupCases(set, null),
+      sections =
+        set.groups.map((group) => caseGroup(group, groupCases(set, group.id))).join("") +
+        (loose.length ? caseGroup({ id: "", name: "Ungrouped" }, loose) : "");
+    return (
+      trainerHeading(set) +
+      trainerTools() +
+      (set.groups.length || set.cases.length
+        ? sections
+        : `<div class="empty-state"><strong>${esc(set.name)} is empty</strong>Add a group, then add the cases you want to practise.</div>`) +
+      trainBar()
+    );
+  }
+  function paintThumb(el) {
+    const entry = findCase(el.dataset.caseThumb);
+    if (!entry) return;
+    try {
+      caseThumb(el, C.setup(favouriteAlg(entry).moves), pref.trainerView);
+    } catch {
+      el.textContent = "—";
+    }
+  }
+  // The card behind the dialog carries the preferred algorithm and its case, so
+  // starring a different one has to reach it without rebuilding the page.
+  function refreshCaseCard(entry) {
+    const card = $$(".case-card").find((el) => el.dataset.case === entry.id);
+    if (!card) return;
+    $(".case-name", card).textContent = entry.name;
+    $(".case-alg", card).textContent = favouriteAlg(entry).moves;
+    const thumb = $("[data-case-thumb]", card);
+    if (thumb) paintThumb(thumb);
+  }
+  function syncGroupChecks() {
+    const set = activeSet();
+    if (!set) return;
+    $$("[data-group-check]").forEach((box) => {
+      const cases = groupCases(set, box.dataset.groupCheck || null),
+        picked = cases.filter((entry) => trainerSelection.has(entry.id)).length;
+      box.checked = Boolean(cases.length) && picked === cases.length;
+      box.indeterminate = picked > 0 && picked < cases.length;
+    });
+  }
+  function refreshTrainBar() {
+    const bar = $(".train-bar");
+    if (!bar) return;
+    $("strong", bar).textContent = trainerSelection.size;
+    bar.hidden = trainerSelection.size < 2;
+  }
+  function pickCase(id, on) {
+    if (on) trainerSelection.add(id);
+    else trainerSelection.delete(id);
+    const card = $$(".case-card").find((el) => el.dataset.case === id);
+    if (card) {
+      card.classList.toggle("picked", on);
+      $("[data-case-check]", card).checked = on;
+    }
+    syncGroupChecks();
+    refreshTrainBar();
+  }
+  function pickGroup(groupId, on) {
+    const set = activeSet();
+    if (!set) return;
+    for (const entry of groupCases(set, groupId || null)) pickCase(entry.id, on);
+  }
+  // Thumbnails are drawn when they come into view: a large set stays as cheap
+  // to open as a small one.
+  function bindTrainer() {
+    syncGroupChecks();
+    trainerObserver?.disconnect();
+    trainerResizeObserver?.disconnect();
+    trainerThumbs = $$("[data-case-thumb]");
+    trainerThumbs.forEach(bindCaseThumbOrbit);
+    if (typeof ResizeObserver === "function") {
+      trainerResizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) if (entry.target._caseThumb) queueCaseThumbDraw(entry.target);
+      });
+      trainerThumbs.forEach((el) => trainerResizeObserver.observe(el));
+    }
+    if (typeof IntersectionObserver !== "function") {
+      trainerThumbs.forEach(paintThumb);
+      return;
+    }
+    trainerObserver = new IntersectionObserver(
+      (entries) => {
+        for (const item of entries) {
+          if (item.isIntersecting) {
+            if (!item.target.firstElementChild) paintThumb(item.target);
+          } else if (item.target.firstElementChild) clearCaseThumb(item.target);
+        }
+      },
+      { rootMargin: "160px 0px" },
+    );
+    trainerThumbs.forEach((el) => trainerObserver.observe(el));
+  }
+  function caseStats(entry) {
+    const s = entry.stats || emptyStats();
+    if (!s.attempts) return "";
+    return `<div class="case-stats"><div><span>Attempts</span><strong>${s.attempts}</strong></div><div><span>Best</span><strong>${fmt(s.best)}</strong></div><div><span>Mean</span><strong>${fmt(s.total / s.attempts)}</strong></div></div>`;
+  }
+  function openCase(id) {
+    const set = activeSet(),
+      entry = set?.cases.find((c) => c.id === id);
+    if (!entry) return;
+    caseDrawer = { setId: set.id, caseId: id, algId: favouriteAlg(entry).id };
+    drawCaseDialog();
+  }
+  function drawCaseDialog() {
+    const set = algSets().find((s) => s.id === caseDrawer?.setId),
+      entry = set?.cases.find((c) => c.id === caseDrawer.caseId);
+    if (!entry) {
+      closeDialog();
+      return;
+    }
+    const current =
+      entry.algs.find((alg) => alg.id === caseDrawer.algId) || favouriteAlg(entry);
+    caseDrawer.algId = current.id;
+    const rows = entry.algs
+      .map(
+        (alg) =>
+          `<div class="alg-row${alg.id === current.id ? " on" : ""}"><button class="alg-pick" data-alg-pick="${esc(alg.id)}" aria-pressed="${alg.id === current.id}">${esc(alg.moves)}</button><button class="icon-btn alg-star${alg.id === entry.favoriteId ? " on" : ""}" data-alg-star="${esc(alg.id)}" aria-pressed="${alg.id === entry.favoriteId}" aria-label="Preferred algorithm" title="Preferred algorithm">${icon("star")}</button>${entry.algs.length > 1 ? `<button class="icon-btn alg-remove" data-alg-delete="${esc(alg.id)}" aria-label="Remove this algorithm" title="Remove">${icon("trash")}</button>` : ""}</div>`,
+      )
+      .join("");
+    showDialog(
+      esc(entry.name),
+      `<div class="case-layout"><div class="case-visual"><div id="case-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="Show the case">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="Play the algorithm">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="Show the solved cube">${icon("last")}</button></div><div id="scramble-notation" class="scramble-tokens"></div><label class="case-speed"><span>Speed</span><input type="range" min="20" max="240" step="10" value="${300 - pref.trainerSpeed}" data-control="trainer-speed" aria-label="Move speed"></label></div><div class="case-side">${caseStats(entry)}<div class="alg-list">${rows}</div><form class="alg-add" id="alg-add"><input name="moves" placeholder="Add an algorithm" autocomplete="off" spellcheck="false" maxlength="600" aria-label="Add an algorithm for this case"><button class="btn btn-quiet" type="submit">${icon("plus")}Add</button></form><p class="alg-error" id="alg-error" role="status"></p><div class="case-side-foot"><button class="icon-btn" data-action="manage-case" aria-label="Manage this case" title="Manage this case">${icon("more")}</button></div></div></div>`,
+      "case-dialog",
+    );
+    mountCaseCube(current.moves);
+    refreshCaseCard(entry);
+    $("#alg-add").onsubmit = (e) => {
+      e.preventDefault();
+      addAlgorithm(entry, e.target.elements.moves.value.trim());
+    };
+  }
+  function mountCaseCube(moves) {
+    const mount = $("#case-cube");
+    if (!mount) return;
+    let setup = "",
+      hold = "";
+    try {
+      setup = C.setup(moves);
+      hold = C.hold(moves);
+    } catch {
+      mount.innerHTML =
+        '<div class="empty-state"><strong>Algorithm unavailable</strong></div>';
+      return;
+    }
+    // The scene opens on the case and steps forward through the algorithm, so
+    // the last move leaves a solved cube instead of a scrambled one.
+    drawerScene = new CubeScene(
+      mount,
+      [hold, moves].filter(Boolean).join(" "),
+      null,
+      {
+        setup: [CUBE_CROSSES[pref.cubeCross].rotation, setup].filter(Boolean).join(" "),
+        speed: pref.trainerSpeed,
+        fixedOrientation: true,
+      },
+    );
+    drawerScene.onChange = updateNotation;
+    if (pref.cubeMode === "net") drawerScene.setMode("net");
+    updateNotation();
+  }
+  function addAlgorithm(entry, moves) {
+    const error = $("#alg-error");
+    if (!moves) return;
+    error.textContent = "";
+    try {
+      C.tokens(moves);
+    } catch (e) {
+      error.textContent = e.message;
+      return;
+    }
+    if (entry.algs.some((alg) => alg.moves === moves)) {
+      error.textContent = "This case already has that algorithm.";
+      return;
+    }
+    if (C.solvesCase(moves, C.setup(favouriteAlg(entry).moves)) === null) {
+      error.textContent = "That algorithm does not solve this case.";
+      return;
+    }
+    const alg = { id: uid(), moves };
+    entry.algs.push(alg);
+    caseDrawer.algId = alg.id;
+    persist();
+    drawCaseDialog();
+  }
+  function removeAlgorithm(entry, algId) {
+    if (entry.algs.length < 2) return;
+    entry.algs = entry.algs.filter((alg) => alg.id !== algId);
+    if (entry.favoriteId === algId) entry.favoriteId = entry.algs[0].id;
+    if (caseDrawer.algId === algId) caseDrawer.algId = entry.favoriteId;
+    persist();
+    drawCaseDialog();
+  }
+  function manageCase() {
+    const set = algSets().find((s) => s.id === caseDrawer?.setId),
+      entry = set?.cases.find((c) => c.id === caseDrawer.caseId);
+    if (!entry) return;
+    const target = { setId: set.id, caseId: entry.id };
+    showDialog(
+      "Manage case",
+      `<form id="case-manage"><div class="case-form-grid"><label class="field">Case name<input name="name" maxlength="60" value="${esc(entry.name)}" required autocomplete="off"></label>${set.groups.length ? `<label class="field">Group<select name="group">${set.groups.map((g) => `<option value="${esc(g.id)}"${g.id === entry.groupId ? " selected" : ""}>${esc(g.name)}</option>`).join("")}<option value=""${entry.groupId ? "" : " selected"}>Ungrouped</option></select></label>` : ""}</div><div class="error-text" id="form-error"></div><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="delete-case">${icon("trash")}Delete case</button><button class="btn btn-dark" type="submit">Save ${icon("arrow")}</button></div></form>`,
+    );
+    caseDrawer = target;
+    $("#case-manage").onsubmit = (e) => {
+      e.preventDefault();
+      const name = e.target.elements.name.value.trim();
+      if (!name) return;
+      entry.name = name;
+      if (e.target.elements.group) entry.groupId = e.target.elements.group.value || null;
+      persist();
+      closeDialog();
+      render();
+    };
+  }
+  function deleteCase() {
+    const set = algSets().find((s) => s.id === caseDrawer?.setId),
+      entry = set?.cases.find((c) => c.id === caseDrawer.caseId);
+    if (!entry) return;
+    set.cases = set.cases.filter((c) => c.id !== entry.id);
+    trainerSelection.delete(entry.id);
+    caseDrawer = null;
+    persist();
+    closeDialog();
+    render();
+    toast(`Deleted ${entry.name}.`);
+  }
+  function newSet() {
+    showDialog(
+      "New alg set",
+      `<p>A set holds the cases you drill together — one method, one step.</p><form id="set-form"><label class="field">Set name<input name="name" maxlength="80" placeholder="Name" required autofocus autocomplete="off"></label><div class="error-text" id="form-error"></div><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">Create set ${icon("arrow")}</button></div></form>`,
+    );
+    $("#set-form").onsubmit = (e) => {
+      e.preventDefault();
+      const name = e.target.elements.name.value.trim();
+      if (!name) return;
+      if (algSets().some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+        $("#form-error").textContent = "A set with this name already exists.";
+        return;
+      }
+      const set = { id: uid(), name, builtin: null, groups: [], cases: [] };
+      state.algSets = [...algSets(), set];
+      pref.trainerSet = set.id;
+      trainerSelection.clear();
+      savePref();
+      persist();
+      closeDialog();
+      render();
+    };
+  }
+  function manageSet() {
+    const set = activeSet();
+    if (!set) return;
+    const missing =
+      typeof CT_TRAINER !== "undefined" &&
+      CT_TRAINER.SETS.some(
+        (seed) => !algSets().some((s) => s.builtin === seed.builtin),
+      );
+    showDialog(
+      "Manage set",
+      `<form id="set-rename"><label class="field">Set name<input name="name" maxlength="80" value="${esc(set.name)}" required autocomplete="off"></label><div class="error-text" id="form-error"></div><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="delete-set">${icon("trash")}Delete set</button>${missing ? `<button type="button" class="btn btn-quiet" data-action="restore-sets">${icon("reset")}Restore built-in sets</button>` : ""}<button class="btn btn-dark" type="submit">Save ${icon("arrow")}</button></div></form>`,
+    );
+    $("#set-rename").onsubmit = (e) => {
+      e.preventDefault();
+      const name = e.target.elements.name.value.trim();
+      if (!name) return;
+      if (
+        algSets().some(
+          (s) => s.id !== set.id && s.name.toLowerCase() === name.toLowerCase(),
+        )
+      ) {
+        $("#form-error").textContent = "A set with this name already exists.";
+        return;
+      }
+      set.name = name;
+      persist();
+      closeDialog();
+      render();
+    };
+  }
+  function confirmDeleteSet() {
+    const set = activeSet();
+    if (!set) return;
+    showDialog(
+      "Delete set",
+      `<p><strong>${esc(set.name)}</strong> and its ${set.cases.length} case${set.cases.length === 1 ? "" : "s"} will be removed, along with the times recorded for them.</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="close-dialog">Keep it</button><button class="btn btn-danger" data-action="confirm-delete-set">Delete set</button></div>`,
+      "delete-dialog",
+    );
+  }
+  function deleteSet() {
+    const set = activeSet();
+    if (!set) return;
+    state.algSets = algSets().filter((s) => s.id !== set.id);
+    pref.trainerSet = algSets()[0]?.id || null;
+    trainerSelection.clear();
+    savePref();
+    persist();
+    closeDialog();
+    render();
+    toast(`Deleted ${set.name}.`);
+  }
+  function restoreSets() {
+    if (typeof CT_TRAINER === "undefined") return;
+    const restored = CT_TRAINER.SETS.filter(
+      (seed) => !algSets().some((s) => s.builtin === seed.builtin),
+    ).map(buildSeedSet);
+    if (!restored.length) return;
+    state.algSets = [...algSets(), ...restored];
+    pref.trainerSet = restored[0].id;
+    savePref();
+    persist();
+    closeDialog();
+    render();
+    toast(`Restored ${restored.map((s) => s.name).join(", ")}.`);
+  }
+  function newGroup() {
+    const set = activeSet();
+    if (!set) return;
+    showDialog(
+      "New group",
+      `<form id="group-form"><label class="field">Group name<input name="name" maxlength="80" placeholder="Name" required autofocus autocomplete="off"></label><div class="error-text" id="form-error"></div><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">Create group ${icon("arrow")}</button></div></form>`,
+    );
+    $("#group-form").onsubmit = (e) => {
+      e.preventDefault();
+      const name = e.target.elements.name.value.trim();
+      if (!name) return;
+      if (set.groups.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
+        $("#form-error").textContent = "This set already has that group.";
+        return;
+      }
+      set.groups.push({ id: uid(), name });
+      persist();
+      closeDialog();
+      render();
+    };
+  }
+  function newCaseDialog(groupId = "") {
+    const set = activeSet();
+    if (!set) return;
+    const groups = set.groups;
+    showDialog(
+      "New case",
+      `<p>The cube is scrambled with the algorithm reversed, so the case is exactly the one it solves.</p><form id="case-form"><div class="case-form-grid"><label class="field">Case name<input name="name" maxlength="60" placeholder="Name" required autofocus autocomplete="off"></label>${groups.length ? `<label class="field">Group<select name="group">${groups.map((g) => `<option value="${esc(g.id)}"${g.id === groupId ? " selected" : ""}>${esc(g.name)}</option>`).join("")}<option value="">Ungrouped</option></select></label>` : ""}</div><label class="field">Algorithm<input name="moves" placeholder="R U R' U'" required autocomplete="off" spellcheck="false" maxlength="600"></label><div class="error-text" id="form-error"></div><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">Add case ${icon("arrow")}</button></div></form>`,
+    );
+    $("#case-form").onsubmit = (e) => {
+      e.preventDefault();
+      const fields = e.target.elements,
+        name = fields.name.value.trim(),
+        moves = fields.moves.value.trim(),
+        error = $("#form-error");
+      if (!name || !moves) return;
+      try {
+        C.tokens(moves);
+      } catch (err) {
+        error.textContent = err.message;
+        return;
+      }
+      const key = C.caseKey(moves),
+        clash = set.cases.find(
+          (entry) => C.caseKey(favouriteAlg(entry).moves) === key,
+        );
+      if (clash) {
+        error.textContent = `This set already has that case, as ${clash.name}.`;
+        return;
+      }
+      set.cases.push(newCase(name, fields.group?.value || null, [moves]));
+      persist();
+      closeDialog();
+      render();
+    };
+  }
+  const roundLength = (mode, count) =>
+    mode === "every" ? trainerSelection.size * count : count;
+  function trainNote(mode, count) {
+    const n = roundLength(mode, Math.max(1, count || 1));
+    return `${trainerSelection.size} cases · ${n} attempt${n === 1 ? "" : "s"}`;
+  }
+  function openTrainDialog() {
+    if (trainerSelection.size < 2) return;
+    const mode = pref.trainerMode === "every" ? "every" : "random",
+      count = mode === "every" ? 1 : pref.trainerReps;
+    showDialog(
+      "Train",
+      `<form id="train-form"><div class="train-config"><div class="segmented train-modes" role="group" aria-label="Round">${[
+        ["random", "Random draw"],
+        ["every", "Every case"],
+      ]
+        .map(
+          ([id, label]) =>
+            `<button type="button" class="${mode === id ? "active" : ""}" data-train-mode="${id}" aria-pressed="${mode === id}">${label}</button>`,
+        )
+        .join("")}</div><label class="field"><span id="train-count-label">${mode === "every" ? "Times per case" : "Attempts"}</span><input name="count" type="number" min="1" max="500" step="1" inputmode="numeric" value="${count}" required></label></div><p class="train-note" id="train-note">${trainNote(mode, count)}</p><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">${icon("play")}Start</button></div></form>`,
+      "train-dialog",
+    );
+    const form = $("#train-form");
+    form.dataset.mode = mode;
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      startRound(form.dataset.mode, Number(e.target.elements.count.value) || 1);
+    };
+  }
+  function setTrainMode(mode) {
+    const form = $("#train-form");
+    if (!form) return;
+    form.dataset.mode = mode;
+    $$("[data-train-mode]", form).forEach((b) => {
+      b.classList.toggle("active", b.dataset.trainMode === mode);
+      b.setAttribute("aria-pressed", String(b.dataset.trainMode === mode));
+    });
+    $("#train-count-label").textContent =
+      mode === "every" ? "Times per case" : "Attempts";
+    const count = form.elements.count;
+    count.value = mode === "every" ? 1 : pref.trainerReps;
+    $("#train-note").textContent = trainNote(mode, Number(count.value));
+  }
+  function startRound(mode, count) {
+    const set = activeSet();
+    if (!set || typeof CT_TRAINER === "undefined") return;
+    const ids = [...trainerSelection].filter((id) =>
+        set.cases.some((entry) => entry.id === id),
+      ),
+      queue = CT_TRAINER.buildRound(ids, { mode, reps: count });
+    if (!queue.length) return;
+    pref.trainerMode = mode;
+    if (mode === "random") pref.trainerReps = Math.max(1, Math.round(count));
+    savePref();
+    training = { setId: set.id, queue, index: 0, results: [], caseId: null, caseName: "", scramble: "" };
+    if (!nextAttempt()) {
+      training = null;
+      return;
+    }
+    closeDialog(true);
+    navigate("training");
+  }
+  // Each attempt draws one of the case's own algorithms and scrambles from it,
+  // so a case with several algorithms is shown from several angles.
+  function nextAttempt() {
+    if (!training) return false;
+    const set = algSets().find((s) => s.id === training.setId);
+    while (training.index < training.queue.length) {
+      const entry = set?.cases.find(
+        (c) => c.id === training.queue[training.index],
+      );
+      if (entry) {
+        const alg = entry.algs[Math.floor(Math.random() * entry.algs.length)];
+        try {
+          training.scramble = C.trainingScramble(alg.moves);
+          training.caseId = entry.id;
+          training.caseName = entry.name;
+          return true;
+        } catch {}
+      }
+      training.index++;
+    }
+    return false;
+  }
+  const trainingRows = () =>
+    [...(training?.results || [])]
+      .reverse()
+      .map(
+        (r, i) =>
+          `<div class="round-row"><span>${training.results.length - i}</span><strong>${esc(r.name)}</strong><span class="time-cell">${fmt(r.seconds)}</span></div>`,
+      )
+      .join("") || '<p class="solve-empty">No attempts yet</p>';
+  function trainingPage() {
+    const total = training?.queue.length || 0,
+      done = training?.results.length || 0,
+      last = training?.results.at(-1);
+    // No cube here on purpose: seeing the case would answer the question.
+    return `<div class="focus-stage timer-card training-stage" data-state="${timer.phase}"><div class="training-head"><span class="chip">${esc(activeSet()?.name || "Trainer")}</span><span class="training-progress" id="training-progress">${Math.min(done + 1, total)} / ${total}</span><button class="btn btn-quiet" data-action="end-round">End round ${icon("close")}</button></div><div class="focus-main"><div class="focus-time"><div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(training?.scramble || "")}</p></div><button class="timer-surface" id="timer-surface" aria-label="Timer. ${pref.pressToStart ? "Press to start, press again to stop." : "Hold space or press and hold here, then release to start."}"><span class="timer-state sr-only" id="timer-state" role="status">READY</span><span class="timer-digits" id="timer-digits">${last ? fmt(last.seconds) : "0.00"}</span></button></div></div><aside class="solve-panel training-panel"><h2>This round</h2><div class="round-list" id="training-list">${trainingRows()}</div></aside></div>`;
+  }
+  function refreshTrainingAttempt(last) {
+    if (!$(".training-stage")) {
+      render();
+      return;
+    }
+    $("#timer-digits").textContent = fmt(last);
+    $(".focus-scramble").textContent = training.scramble;
+    $("#training-progress").textContent = `${Math.min(training.results.length + 1, training.queue.length)} / ${training.queue.length}`;
+    $("#training-list").innerHTML = trainingRows();
+    revealScramble();
+  }
+  function finishTrainingAttempt() {
+    const seconds = Math.floor((performance.now() - timer.start) / 10) / 100;
+    cancelAnimationFrame(timer.raf);
+    const set = algSets().find((s) => s.id === training.setId),
+      entry = set?.cases.find((c) => c.id === training.caseId);
+    if (entry) {
+      const stats = (entry.stats = entry.stats || emptyStats());
+      stats.attempts++;
+      stats.total += seconds;
+      stats.last = seconds;
+      stats.best = stats.best == null ? seconds : Math.min(stats.best, seconds);
+      stats.lastDate = new Date().toISOString();
+      persist(true, true);
+    }
+    training.results.push({
+      caseId: training.caseId,
+      name: training.caseName,
+      seconds,
+    });
+    setTimerPhase("stopped");
+    training.index++;
+    if (nextAttempt()) refreshTrainingAttempt(seconds);
+    else endRound();
+  }
+  function endRound() {
+    const results = training?.results || [];
+    training = null;
+    cancelAnimationFrame(timer.raf);
+    setTimerPhase("idle");
+    navigate("trainer");
+    if (results.length) roundSummary(results);
+  }
+  function roundSummary(results) {
+    const best = results.reduce((a, r) => Math.min(a, r.seconds), Infinity),
+      mean = results.reduce((a, r) => a + r.seconds, 0) / results.length;
+    showDialog(
+      "Round complete",
+      `<div class="case-stats"><div><span>Attempts</span><strong>${results.length}</strong></div><div><span>Best</span><strong>${fmt(best)}</strong></div><div><span>Mean</span><strong>${fmt(mean)}</strong></div></div><div class="round-list round-list-scroll">${results
+        .map(
+          (r, i) =>
+            `<div class="round-row"><span>${i + 1}</span><strong>${esc(r.name)}</strong><span class="time-cell">${fmt(r.seconds)}</span></div>`,
+        )
+        .join("")}</div><div class="dialog-actions"><button class="btn btn-quiet" data-action="close-dialog">Done</button><button class="btn btn-dark" data-action="train">${icon("reset")}Again</button></div>`,
+    );
+  }
   function render(preserveEffects = false) {
     cancelSceneRefresh();
     cancelPanelRefresh();
@@ -1227,20 +2204,29 @@ ${rankCard(status)}
     panelObserver = null;
     libraryObserver?.disconnect();
     libraryObserver = null;
+    trainerObserver?.disconnect();
+    trainerObserver = null;
+    trainerResizeObserver?.disconnect();
+    trainerResizeObserver = null;
+    trainerThumbs.forEach(clearCaseThumb);
+    trainerThumbs = [];
     $("#chart-tooltip").hidden = true;
     const focused = view === "timer" || view === "effects",
-      immersive = focused || view === "lighting",
+      inRound = view === "training",
+      immersive = focused || inRound || view === "lighting",
       scroll = keepPanel ? $("#solve-list")?.scrollTop || 0 : 0;
     if (!keepPanel) panelCount = PANEL_BATCH;
     keepPanel = false;
     $("#main").innerHTML = view === "lighting"
       ? lightingStudioPage()
+      : inRound
+      ? trainingPage()
       : focused
       ? view === "effects" ? effectsDemoPage() : focusPage()
       : banners() +
-        `<div class="page-enter">${view === "overview" ? overview() : view === "solves" ? library() : insights()}</div>`;
+        `<div class="page-enter">${view === "overview" ? overview() : view === "trainer" ? trainer() : view === "solves" ? library() : insights()}</div>`;
     document.body.classList.toggle("focus-mode", immersive);
-    document.body.classList.toggle("timer-view", focused);
+    document.body.classList.toggle("timer-view", focused || inRound);
     document.body.classList.toggle("lighting-mode", view === "lighting");
     document.body.classList.toggle("overview-view", view === "overview");
     renderSidebar();
@@ -1252,7 +2238,7 @@ ${rankCard(status)}
       updateNotation();
     }
     if (view === "lighting" && lightingState && $("#cube-lighting-studio"))
-      lightingScene = new CubeScene($("#cube-lighting-studio"), "x'", lightingState);
+      lightingScene = new CubeScene($("#cube-lighting-studio"), "R R'", lightingState);
     attachLiveCamera();
     revealScramble();
     if (view === "effects") $("#demo-effect").value = demoEffect;
@@ -1267,6 +2253,14 @@ ${rankCard(status)}
           $("#timer-surface")?.focus({ preventScroll: true });
       });
     } else if (view === "solves") bindLibrary();
+    else if (view === "trainer") bindTrainer();
+    else if (inRound) {
+      bindTimerSurface();
+      requestAnimationFrame(() => {
+        if (view === "training" && !$("#dialog").open)
+          $("#timer-surface")?.focus({ preventScroll: true });
+      });
+    }
   }
   function navigate(next) {
     if (timerBusy()) return;
@@ -1328,22 +2322,42 @@ ${rankCard(status)}
     effects().celebrate(event);
   }
 
+  // Where one sticker sits, in the page's own 3D space. Shared so a still case
+  // preview is the same cube as the interactive one, minus the scene around it.
+  function stickerMatrix(s) {
+    const css = (v) => [v[0], -v[1], v[2]],
+      r = css(s.right),
+      d = css(s.down),
+      n = css(s.n),
+      p = css(s.p.map((v, j) => v * 46 + s.n[j] * 23));
+    return `matrix3d(${[...r, 0, ...d, 0, ...n, 0, ...p, 1]
+      .map((v) => (Math.abs(v) < 1e-9 ? 0 : v))
+      .join(",")})`;
+  }
   // True sticker coordinates drive both the 3D scene and the unfolded net.
   class CubeScene {
-    constructor(mount, alg, appearance = null) {
+    constructor(mount, alg, appearance = null, options = {}) {
       this.mount = mount;
       this.alg = alg;
       this.appearance = appearance || pref;
-      this.isStudio = Boolean(appearance);
-      this.entrance = mount.classList.contains("focus-cube") &&
-        (view === "effects" || (view === "timer" && pref.scrambleAnimation));
+      this.isStudio = options.studio ?? Boolean(appearance);
+      // Only the cube beside the live timer keeps the scramble's fixed frame.
+      // Every other cube is re-held so the user's preferred cross points down.
+      this.fixedTimerOrientation = options.fixedOrientation ?? (mount.id === "cube-mount" && view === "timer");
+      // A case scene opens on the scrambled case and steps forward through the
+      // algorithm that solves it, rather than through a scramble.
+      this.base = options.setup || "";
+      this.moveDuration = options.speed || 72;
+      this.entrance = options.entrance ?? (mount.classList.contains("focus-cube") &&
+        (view === "effects" || (view === "timer" && pref.scrambleAnimation)));
       this.moves = [];
       this.index = 0;
       this.cube = new C.Cube();
       const orbit = this.appearance.cubeFinish === "standard" ? CUBE_ORBITS.standard : CUBE_ORBITS.threeD;
       this.pitch = orbit.pitch;
       this.yaw = orbit.yaw;
-      this.zoom = 1;
+      this.defaultZoom = options.zoom ?? 1;
+      this.zoom = this.defaultZoom;
       this.mode = "3d";
       this.playing = false;
       this.anim = 0;
@@ -1359,7 +2373,8 @@ ${rankCard(status)}
       }
       try {
         this.moves = C.tokens(alg);
-        if (!this.entrance) {
+        if (this.base) this.cube.apply(this.base);
+        else if (!this.entrance) {
           this.cube.apply(alg);
           this.index = this.moves.length;
         }
@@ -1406,6 +2421,7 @@ ${rankCard(status)}
     ready() {
       if (this.invalid || this.disposed || this.started) return;
       this.started = true;
+      this.mount.classList.remove("cube-loading");
       if (this.materializes) this.stage.classList.add("cube-materialize");
       if (this.entrance) this.startEntrance();
     }
@@ -1418,6 +2434,9 @@ ${rankCard(status)}
     }
     async setAppearance() {
       if (this.invalid || this.disposed) return;
+      cancelAnimationFrame(this.crossAnim);
+      this.crossAnim = 0;
+      this.crossRequest = (this.crossRequest || 0) + 1;
       const request = this.appearanceRequest = (this.appearanceRequest || 0) + 1;
       const colors = CUBE_PALETTES[this.appearance.cubePalette].colors;
       this.elements.forEach((el, i) => { el.style.background = colors[this.cube.stickers[i].face]; });
@@ -1477,39 +2496,37 @@ ${rankCard(status)}
         ? "The cube could not load. Reload the app; if this continues, restart CubeTracker."
         : "Realistic rendering is unavailable on this device. Showing the standard preview.";
     }
-    draw(spec = null, fraction = 0) {
+    draw(spec = null, fraction = 0, crossOverride = null, specAlreadyOriented = false) {
       if (this.invalid || this.disposed) return;
       if (this.mode === "net") {
         this.drawNet();
         return;
       }
+      const cross = crossOverride ?? (this.fixedTimerOrientation ? "D" : (this.appearance.cubeCross ?? pref.cubeCross)),
+        stickers = orientedStickers(this.cube.stickers, cross),
+        shownSpec = specAlreadyOriented ? spec : orientedMoveSpec(spec, cross);
       if (this.realistic) {
-        this.realistic.draw(this.cube.stickers, spec, fraction);
+        this.realistic.draw(stickers, shownSpec, fraction);
         return;
       }
-      this.cube.stickers.forEach((st, i) => {
+      stickers.forEach((st, i) => {
         let s = st;
-        if (spec && spec.select(st.p)) {
+        if (shownSpec && shownSpec.select(st.p)) {
           s = { ...st };
           for (const k of ["p", "n", "right", "down"])
-            s[k] = C.rotate(st[k], spec.axis, spec.angle * fraction);
+            s[k] = C.rotate(st[k], shownSpec.axis, shownSpec.angle * fraction);
         }
-        const css = (v) => [v[0], -v[1], v[2]],
-          r = css(s.right),
-          d = css(s.down),
-          n = css(s.n),
-          p = css(s.p.map((v, j) => v * 46 + s.n[j] * 23));
-        this.elements[i].style.transform =
-          `matrix3d(${[...r, 0, ...d, 0, ...n, 0, ...p, 1].map((v) => (Math.abs(v) < 1e-9 ? 0 : v)).join(",")})`;
+        this.elements[i].style.transform = stickerMatrix(s);
       });
     }
     orbit() {
       this.realistic?.orbit(this.pitch, this.yaw, this.zoom);
       if (this.world)
-        this.world.style.transform = `rotateX(${this.pitch}deg) rotateY(${this.yaw}deg) scale(${this.zoom})`;
+        this.world.style.transform = `scale3d(${this.zoom},${this.zoom},${this.zoom}) rotateX(${this.pitch}deg) rotateY(${this.yaw}deg)`;
     }
     drawNet() {
-      const f = this.cube.facelets();
+      const cross = this.fixedTimerOrientation ? "D" : (this.appearance.cubeCross ?? pref.cubeCross),
+        f = faceletsFromStickers(orientedStickers(this.cube.stickers, cross));
       let net = $(".cube-net", this.stage);
       if (!net) {
         net = document.createElement("div");
@@ -1530,6 +2547,29 @@ ${rankCard(status)}
             `<div class="net-face" style="grid-column:${col};grid-row:${row}" title="${face} face">${f[face].map((c) => `<span style="background:${CUBE_PALETTES[this.appearance.cubePalette].colors[c]}"></span>`).join("")}</div>`,
         )
         .join("");
+    }
+    animateCross(from, to) {
+      cancelAnimationFrame(this.crossAnim);
+      const spec = crossTransitionSpec(from, to);
+      if (!spec || reduced || this.mode === "net" || this.invalid || this.disposed) {
+        this.draw();
+        return;
+      }
+      const request = this.crossRequest = (this.crossRequest || 0) + 1,
+        started = performance.now(),
+        duration = 420;
+      const frame = now => {
+        if (this.disposed || request !== this.crossRequest) return;
+        const progress = Math.min(1, (now - started) / duration),
+          eased = 1 - Math.pow(1 - progress, 3);
+        this.draw(spec, eased, from, true);
+        if (progress < 1) this.crossAnim = requestAnimationFrame(frame);
+        else {
+          this.crossAnim = 0;
+          this.draw();
+        }
+      };
+      this.crossAnim = requestAnimationFrame(frame);
     }
     setMode(mode) {
       if (this.invalid) return;
@@ -1653,7 +2693,7 @@ ${rankCard(status)}
           const orbit = this.appearance.cubeFinish === "standard" ? CUBE_ORBITS.standard : CUBE_ORBITS.threeD;
           this.pitch = orbit.pitch;
           this.yaw = orbit.yaw;
-          this.zoom = 1;
+          this.zoom = this.defaultZoom;
         } else if (e.key === "ArrowLeft") this.yaw -= 15;
         else if (e.key === "ArrowRight") this.yaw += 15;
         else if (e.key === "ArrowUp")
@@ -1688,7 +2728,7 @@ ${rankCard(status)}
             : C.inverse(this.moves[this.index - 1]),
         spec = C.moveSpec(token),
         start = performance.now(),
-        duration = reduced ? 0 : 72;
+        duration = reduced ? 0 : this.moveDuration;
       await new Promise((resolve) => {
         this.finishAnimation = resolve;
         const frame = () => {
@@ -1716,7 +2756,11 @@ ${rankCard(status)}
       if (this.invalid || this.busy) return;
       this.playing = false;
       this.index = Math.max(0, Math.min(this.moves.length, index));
-      this.cube = new C.Cube().apply(this.moves.slice(0, this.index).join(" "));
+      this.cube = new C.Cube().apply(
+        [this.base, this.moves.slice(0, this.index).join(" ")]
+          .filter(Boolean)
+          .join(" "),
+      );
       this.draw();
       this.onChange?.();
     }
@@ -1754,6 +2798,7 @@ ${rankCard(status)}
       cancelAnimationFrame(this.anim);
       cancelAnimationFrame(this.inertia);
       cancelAnimationFrame(this.studioOrbitRaf);
+      cancelAnimationFrame(this.crossAnim);
       clearTimeout(this.interactionTimer);
       this.finishAnimation?.();
       // Parked, not destroyed: the next scene mounted in this slot adopts the
@@ -2356,6 +3401,8 @@ ${rankCard(status)}
   function setTimerPhase(phase) {
     const previous = timer.phase;
     timer.phase = phase;
+    if (phase === "stopped")
+      timer.restartAt = performance.now() + TIMER_RESTART_COOLDOWN_MS;
     if (phase === "inspection" || phase === "running") clearToasts();
     if (phase === "inspection" && !["inspection", "holding", "ready"].includes(previous))
       effects()?.start("inspection", { since: timer.inspectStart, voice: pref.inspectionVoice });
@@ -2383,8 +3430,9 @@ ${rankCard(status)}
         }[phase] || "";
   }
   function beginHold() {
-    if (view !== "timer" || $("#dialog").open) return;
-    if (scramblePending) {
+    if (!["timer", "training"].includes(view) || $("#dialog").open) return;
+    const drilling = view === "training";
+    if (!drilling && scramblePending) {
       toast("Preparing scramble…");
       return;
     }
@@ -2393,17 +3441,20 @@ ${rankCard(status)}
       timer.blockedRelease = true;
       return;
     }
+    if (timer.phase === "stopped" && performance.now() < timer.restartAt) return;
     if (timer.phase === "holding" || timer.phase === "ready") return;
-    if (!active() || demo) {
+    if (!drilling && (!active() || demo)) {
       openCategory("Create a category to start recording.");
       return;
     }
-    if (!cameraReadyForAttempt()) return;
+    if (!drilling && !cameraReadyForAttempt()) return;
     if (["idle", "stopped"].includes(timer.phase)) {
-      recordProfile();
+      if (!drilling) recordProfile();
       motion?.clear();
     }
-    if (pref.inspection && (timer.phase === "idle" || timer.phase === "stopped")) {
+    // Inspection is never used while drilling: the scramble already names the
+    // case, so there is nothing to inspect.
+    if (!drilling && pref.inspection && (timer.phase === "idle" || timer.phase === "stopped")) {
       // With "Record inspection" off the clip begins with the solve itself,
       // not with the inspection countdown.
       if (pref.videoRecordInspection) startVideoRecording();
@@ -2419,11 +3470,12 @@ ${rankCard(status)}
       setTimerPhase("ready");
       releaseHold();
       timer.blockedRelease = true;
-      if (pref.videoRecording && (!pref.inspection || !pref.videoRecordInspection))
+      if (!drilling && pref.videoRecording && (!pref.inspection || !pref.videoRecordInspection))
         videoCapture.startOnRelease = true;
       return;
     }
-    if (!pref.inspection || !pref.videoRecordInspection) startVideoRecording();
+    if (!drilling && (!pref.inspection || !pref.videoRecordInspection))
+      startVideoRecording();
     setTimerPhase("holding");
     timer.hold = setTimeout(() => setTimerPhase("ready"), 350);
   }
@@ -2441,7 +3493,7 @@ ${rankCard(status)}
       return;
     }
     if (timer.phase !== "ready") return;
-    if (pref.inspection && timer.priorPhase !== "inspection") {
+    if (view !== "training" && pref.inspection && timer.priorPhase !== "inspection") {
       timer.inspectStart = performance.now();
       timer.penalty = "";
       setTimerPhase("inspection");
@@ -2519,6 +3571,10 @@ ${rankCard(status)}
   }
   function finishSolve() {
     if (timer.phase !== "running") return;
+    if (view === "training") {
+      finishTrainingAttempt();
+      return;
+    }
     const rawMs = Math.floor((performance.now() - timer.start) / 10) * 10;
     cancelAnimationFrame(timer.raf);
     const before = recordProfile();
@@ -2553,12 +3609,13 @@ ${rankCard(status)}
     timer.blockedRelease = false;
     discardVideoRecording();
     setTimerPhase("idle");
-    if (view === "timer") render();
+    if (view === "timer" || view === "training") render();
   }
   function bindTimerSurface() {
     const el = $("#timer-surface");
     el.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
+      if (e.pointerType === "mouse" && !pref.mouseClickStart && timer.phase !== "running") return;
       e.preventDefault();
       el.setPointerCapture(e.pointerId);
       timer.pointerActive = true;
@@ -2607,6 +3664,10 @@ ${rankCard(status)}
   document.addEventListener("keydown", (e) => {
     if ($("#dialog").open || (timer.phase !== "running" && editable(e.target)))
       return;
+    if (e.key === "Escape" && $(".activity-popover:not([hidden])")) {
+      closeActivityPopover();
+      return;
+    }
     if (view === "effects") {
       if (e.key === "Escape") { e.preventDefault(); navigate("timer"); }
       return;
@@ -2623,7 +3684,7 @@ ${rankCard(status)}
     }
     if (
       e.key === "Enter" &&
-      view === "timer" &&
+      ["timer", "training"].includes(view) &&
       e.target.id === "timer-surface" &&
       timer.phase !== "running" &&
       !e.repeat
@@ -2654,20 +3715,24 @@ ${rankCard(status)}
     }
     if (
       e.code === "Space" &&
-      view === "timer" &&
+      ["timer", "training"].includes(view) &&
       !e.target.closest("button:not(.timer-surface)")
     ) {
       e.preventDefault();
       if (!e.repeat) beginHold();
       return;
     }
-    if (e.code === "Space" && view === "timer" && e.target === document.body) {
+    if (e.code === "Space" && ["timer", "training"].includes(view) && e.target === document.body) {
       e.preventDefault();
       if (!e.repeat) beginHold();
       return;
     }
     if (e.key === "Escape" && timerBusy()) {
       cancelTimer();
+      return;
+    }
+    if (e.key === "Escape" && view === "training") {
+      endRound();
       return;
     }
     if (!timerBusy() && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -2911,6 +3976,7 @@ ${rankCard(status)}
     // These mounts are rebuilt with the dialog body, so their renderers have no
     // stage to come back to. Park would leak a context per dialog open.
     cubeStudio?.discardCube("drawer-cube");
+    cubeStudio?.discardCube("case-cube");
     cubeStudio?.discardCube("appearance-cube");
     cubeStudio?.discardCube("cube-lighting-studio");
     appearanceScene = null;
@@ -2935,15 +4001,26 @@ ${rankCard(status)}
     }, 190);
   }
   $("#dialog").addEventListener("close", () => {
+    const wasAppearance = $("#dialog").classList.contains("appearance-dialog"),
+      closingAppearanceScene = wasAppearance ? appearanceScene : null;
+    if (wasAppearance) appearanceLoadToken++;
     averageDrawer = null;
+    caseDrawer = null;
     disposeSolveVideoUrl();
     clearTimeout(dialogCloseTimer);
     $("#dialog").classList.remove("closing");
     drawerScene?.destroy();
-    appearanceScene?.destroy();
+    closingAppearanceScene?.destroy();
+    if (!wasAppearance) appearanceScene?.destroy();
     if (view !== "lighting") lightingScene?.destroy();
     cubeStudio?.discardCube("drawer-cube");
-    cubeStudio?.discardCube("appearance-cube");
+    cubeStudio?.discardCube("case-cube");
+    const appearanceCleanup = wasAppearance
+      ? new Promise(resolve => requestAnimationFrame(() => {
+          cubeStudio?.discardCube("appearance-cube");
+          resolve();
+        }))
+      : (cubeStudio?.discardCube("appearance-cube"), Promise.resolve());
     if (view !== "lighting") cubeStudio?.discardCube("cube-lighting-studio");
     appearanceScene = null;
     if (view !== "lighting") {
@@ -2952,6 +4029,7 @@ ${rankCard(status)}
     }
     drawerScene = null;
     drawerId = null;
+    restoreMainCubeAfterAppearance(appearanceCleanup);
     if (view === "timer") $("#timer-surface")?.focus({ preventScroll: true });
   });
   $("#dialog").addEventListener("cancel", (e) => {
@@ -3208,16 +4286,72 @@ ${rankCard(status)}
       "Settings",
       `<section class="camera-settings${pref.videoRecording ? " enabled" : ""}"><label class="toggle-row camera-toggle"><input type="checkbox" data-control="video-recording" ${pref.videoRecording ? "checked" : ""}><span><strong>Record solves on video</strong>Keep the selected camera ready, record each timed attempt, and save its clip with that solve. Camera audio is not recorded.</span></label><div class="camera-options"><div class="camera-setting-grid"><label class="field">Camera<select data-control="camera-device"><option value="">Detecting cameras…</option></select></label><label class="field">Resolution<select data-control="video-resolution" id="camera-resolution">${Object.entries(VIDEO_RESOLUTIONS).map(([value, mode]) => `<option value="${value}"${pref.videoResolution === value ? " selected" : ""}>${mode.label}</option>`).join("")}</select></label><label class="field">Frame rate<select data-control="video-fps">${VIDEO_FPS.map((value) => `<option value="${value}"${pref.videoFps === value ? " selected" : ""}>${value} fps</option>`).join("")}</select></label><label class="field">Keep under (s)<input type="number" data-control="video-max-seconds" min="0" max="3600" step="1" inputmode="numeric" placeholder="No limit" value="${pref.videoMaxSeconds || ""}"></label></div><label class="toggle-row camera-inline-toggle"><input type="checkbox" data-control="video-record-inspection" ${pref.videoRecordInspection ? "checked" : ""}><span><strong>Record inspection</strong></span></label><p class="camera-status" id="camera-status" role="status"></p><p class="camera-note">Leave “Keep videos under” empty to store every clip. With a number in it, only solves faster than that many seconds keep their video; slower ones are saved as solves without video. DNFs always keep theirs. 720p at 30 fps is the balanced default. The camera remains ready while this option is on so recording can begin without delaying the timer.</p></div></section><label class="toggle-row"><input type="checkbox" data-control="inspection" ${pref.inspection ? "checked" : ""}><span><strong>15-second inspection</strong>Press once to start inspection, then hold and release to start the solve. +2 at 15 seconds; at 17 the attempt is saved as a DNF automatically.</span></label><label class="toggle-row"><input type="checkbox" data-control="press-start" ${pref.pressToStart ? "checked" : ""}><span><strong>Start on a single press</strong>Skip the 350ms hold: one press starts the solve and the next key stops it. With inspection on, the first press starts inspection and the second starts the solve.</span></label><label class="toggle-row"><input type="checkbox" data-control="inspection-voice" ${pref.inspectionVoice ? "checked" : ""}><span><strong>Spoken inspection cues</strong>Hear “8 seconds” and “12 seconds” during inspection. Visual cues are always included.</span></label><label class="toggle-row"><input type="checkbox" data-control="scramble-animation" ${pref.scrambleAnimation ? "checked" : ""}><span><strong>Scramble animation</strong>Show the cube solved first, then animate through the scramble. Turn this off to spawn the cube directly scrambled.</span></label><label class="toggle-row"><input type="checkbox" data-control="cube-net" ${pref.cubeMode === "net" ? "checked" : ""}><span><strong>Show the cube as a flat net</strong>The scramble preview opens unfolded instead of in 3D. Clicking the cube switches either way.</span></label><div class="settings-actions"><button class="btn btn-quiet" data-action="appearance">${icon("palette")}Appearance</button><button class="btn btn-quiet" data-action="import">${icon("upload")}Import CSV</button><button class="btn btn-quiet" data-action="storage">${icon("folder")}Storage</button></div><div class="dialog-actions"><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
     );
+    const mouseClickStart = document.querySelector('[data-control="inspection-voice"]');
+    mouseClickStart?.closest(".toggle-row")?.insertAdjacentHTML(
+      "beforebegin",
+      `<label class="toggle-row"><input type="checkbox" data-control="mouse-click-start" ${pref.mouseClickStart ? "checked" : ""}><span><strong>Allow mouse clicks to start the timer</strong>Turn this off to prevent a mouse click from starting a new attempt. Keyboard and touch controls still work.</span></label>`,
+    );
     refreshCameraSettingsUI();
     listCameraDevices();
     if (pref.videoRecording) ensureCameraReady();
   }
+  function suspendMainCubeForAppearance() {
+    const mount = $("#cube-mount");
+    appearanceSuspendedMainCube = Boolean(mount && scene);
+    if (!appearanceSuspendedMainCube) return Promise.resolve();
+    const leavingScene = scene;
+    scene = null;
+    // Start the existing exit motion and yield immediately. Resource disposal
+    // happens only after the dialog has had a chance to paint its shell.
+    return leavingScene.exit().then(() => new Promise(resolve => requestAnimationFrame(() => {
+      cubeStudio?.discardCube("cube-mount");
+      if (mount.isConnected && !scene) mount.replaceChildren();
+      resolve();
+    })));
+  }
+  function restoreMainCubeAfterAppearance(cleanup = Promise.resolve()) {
+    if (!appearanceSuspendedMainCube) return;
+    appearanceSuspendedMainCube = false;
+    const mount = $("#cube-mount");
+    if (!mount || scene || view === "lighting") return;
+    mount.classList.add("cube-loading");
+    // Closing the modal reveals the page first. Only on the following paint do
+    // we dispose the modal cube and build the returning one.
+    requestAnimationFrame(() => {
+      Promise.all([appearanceSuspension, cleanup]).then(() => setTimeout(() => {
+        if (!mount.isConnected || scene || view === "lighting") return;
+        scene = new CubeScene(mount, currentScramble, null, { entrance: false });
+        scene.onChange = updateNotation;
+        if (pref.cubeMode === "net") scene.setMode("net");
+        updateNotation();
+      }, 0));
+    });
+  }
+  function loadAppearanceCube() {
+    const token = ++appearanceLoadToken,
+      mount = $("#appearance-cube");
+    if (!mount) return;
+    mount.classList.add("cube-loading");
+    // Two frames guarantee that the modal and placeholder are visible before
+    // module work, geometry construction or shader compilation begins.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      appearanceSuspension.then(() => setTimeout(() => {
+        if (token !== appearanceLoadToken || !mount.isConnected || !$("#dialog").open) return;
+        appearanceScene = new CubeScene(mount, "R R'", null, { zoom: .8 });
+        if (pref.cubeFinish === "standard") {
+          appearanceScene.yaw = -42;
+          appearanceScene.orbit();
+        }
+      }, 0));
+    }));
+  }
   function appearance() {
+    appearanceSuspension = suspendMainCubeForAppearance();
     const modes = [
-        ["system", "System", "Follow this device"],
-        ["light", "Light", "Soft and airy"],
-        ["dark", "Dark", "Comfortable at night"],
-        ["contrast", "High contrast", "True black and white"],
+        ["system", "System"],
+        ["light", "Light"],
+        ["dark", "Dark"],
+        ["contrast", "High contrast"],
       ],
       accents = [
         ["forest", "Forest"],
@@ -3227,34 +4361,46 @@ ${rankCard(status)}
       ],
       model = CUBE_MODELS[pref.cubeFinish],
       quality = CUBE_QUALITY[pref.cubeQuality];
-    // Two panes. Everything that is not the cube scrolls on the left; the cube
-    // and its own settings hold still on the right. The dialog itself never
-    // scrolls, so the preview can never be pushed out from under its arrows.
+    // The app theme is a narrow rail. The larger cube workspace uses its width
+    // for a preview and a dedicated controls column instead of stacking every
+    // setting under a small preview.
     showDialog(
       "Appearance",
-      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3>Display mode</h3><p>Follow this device, or pin the app to one mode.</p><div class="mode-options">${modes.map(([value, label, detail]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong><small>${detail}</small></button>`).join("")}</div></div><div class="appearance-section"><h3>Color theme</h3><p>Changes the app accents while keeping each display mode balanced.</p><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}"><i class="accent-swatch"></i><span>${label}</span>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><div><span>Cube preview</span><small>Model, surface and light</small></div><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong><span id="cube-model-detail">${model.detail}</span></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div><span class="cube-orbit-hint">Press either side for another cube · drag the middle to rotate · click for 2D</span></div><div class="cube-setting cube-color-setting"><div class="cube-color-head"><h3>Cube colors</h3><div class="cube-core-options" role="group" aria-label="Core color"><span class="cube-core-label">Core</span>${Object.entries(CUBE_CORES).map(([value, c]) => `<button class="cube-core-choice" data-cube-core="${value}" aria-pressed="${pref.cubeCore === value}" title="${c.label} core"><i style="background:${c.swatch}" aria-hidden="true"></i>${c.label}</button>`).join("")}</div></div><div class="cube-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, p]) => `<button class="cube-palette-choice" data-cube-palette="${value}" aria-pressed="${pref.cubePalette === value}"><span class="cube-color-swatches" aria-hidden="true">${["U", "D", "F", "B", "L", "R"].map(f => `<i style="background:${p.colors[f]}"></i>`).join("")}</span><strong>${p.label}</strong><small>${p.detail}</small></button>`).join("")}</div></div><div class="cube-setting cube-wear-setting"><label class="toggle-row"><input type="checkbox" data-control="cube-wear" ${pref.cubeWear ? "checked" : ""}><span><strong>Surface wear</strong>Fine reflective scratches and subtle handling haze. Turn off for factory-new plastic.</span></label></div><div class="cube-settings-row"><div class="cube-setting"><h3>Graphics quality</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="quality-value">${quality.label}</strong><small id="quality-detail">${quality.detail}</small></span>${icon("down")}</button><div class="quality-menu" role="listbox" aria-label="Graphics quality">${Object.entries(CUBE_QUALITY).map(([value, q]) => `<button type="button" class="quality-option" role="option" data-cube-quality="${value}" aria-selected="${pref.cubeQuality === value}"><span><strong>${q.label}</strong><small>${q.detail}</small></span>${icon("check")}</button>`).join("")}</div></div></div><div class="cube-setting"><h3>Environment</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="environment-value">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}</strong><small id="environment-detail">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].detail}</small></span>${icon("down")}</button><div class="quality-menu environment-menu" role="listbox" aria-label="Reflection environment">${Object.entries(CUBE_ENVIRONMENTS).map(([value, e]) => `<button type="button" class="quality-option" role="option" data-cube-environment="${value}" aria-selected="${pref.cubeEnvironment === value}"><span><strong>${e.label}</strong><small>${e.detail}</small></span>${icon("check")}</button>`).join("")}</div></div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status">Every cube works with both palettes. Your choices save automatically.</p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
+      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3>Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3>Color theme</h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}"><i class="accent-swatch"></i><span>${label}</span>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><span>Cube</span><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div></div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3>Cube colors</h3><div class="cube-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, p]) => `<button class="cube-palette-choice" data-cube-palette="${value}" aria-pressed="${pref.cubePalette === value}"><span class="cube-color-swatches" aria-hidden="true">${["U", "D", "F", "B", "L", "R"].map(f => `<i style="background:${p.colors[f]}"></i>`).join("")}</span><strong>${p.label}</strong></button>`).join("")}</div></div><div class="cube-setting cube-core-setting"><h3>Core</h3><div class="cube-core-options" role="group" aria-label="Core color">${Object.entries(CUBE_CORES).map(([value, c]) => `<button class="cube-core-choice" data-cube-core="${value}" aria-pressed="${pref.cubeCore === value}" title="${c.label} core"><i style="background:${c.swatch}" aria-hidden="true"></i>${c.label}</button>`).join("")}</div></div><div class="cube-setting cube-wear-setting"><label class="toggle-row"><input type="checkbox" data-control="cube-wear" ${pref.cubeWear ? "checked" : ""}><span><strong>Surface wear</strong></span></label></div><div class="cube-settings-row"><div class="cube-setting"><h3>Graphics quality</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="quality-value">${quality.label}</strong></span>${icon("down")}</button><div class="quality-menu" role="listbox" aria-label="Graphics quality">${Object.entries(CUBE_QUALITY).map(([value, q]) => `<button type="button" class="quality-option" role="option" data-cube-quality="${value}" aria-selected="${pref.cubeQuality === value}"><span><strong>${q.label}</strong></span>${icon("check")}</button>`).join("")}</div></div></div><div class="cube-setting"><h3>Environment</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="environment-value">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}</strong></span>${icon("down")}</button><div class="quality-menu environment-menu" role="listbox" aria-label="Reflection environment">${Object.entries(CUBE_ENVIRONMENTS).map(([value, e]) => `<button type="button" class="quality-option" role="option" data-cube-environment="${value}" aria-selected="${pref.cubeEnvironment === value}"><span><strong>${e.label}</strong></span>${icon("check")}</button>`).join("")}</div></div></div></div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
       "appearance-dialog",
     );
-    appearanceScene = new CubeScene($("#appearance-cube"), "x'");
-    if (pref.cubeFinish === "standard") {
-      appearanceScene.yaw = -42;
-      appearanceScene.orbit();
-    }
+    $(".cube-preview-column").insertAdjacentHTML(
+      "beforeend",
+      `<div class="cube-cross-setting"><h3>Cross color</h3><div class="cube-cross-options" role="group" aria-label="Preferred cross color">${Object.entries(CUBE_CROSSES).map(([face, item]) => `<button data-cube-cross="${face}" aria-label="${item.label}" title="${item.label}" aria-pressed="${pref.cubeCross === face}"><i style="background:${CUBE_PALETTES[pref.cubePalette].colors[face]}"></i></button>`).join("")}</div></div>`,
+    );
+    loadAppearanceCube();
   }
   function lightingControl(key, value) {
     const control = LIGHTING_CONTROLS[key];
     return `<label class="lighting-control"><span><strong>${control.label}</strong><small>${control.detail}</small></span><output data-lighting-output="${key}">${Number(value).toFixed(key === "glossRough" ? 3 : 2)}</output><input type="range" min="${control.min}" max="${control.max}" step="${control.step}" value="${value}" data-lighting-control="${key}" aria-label="${control.label}"></label>`;
   }
   async function lightingStudio(next = null) {
+    const opening = view !== "lighting";
+    let loadingPaint = Promise.resolve();
+    if (opening) {
+      lightingReturnView = view;
+      // Enter the studio's loading state before importing or preparing WebGL.
+      // Keeping it for a few frames makes the animation perceptible even when
+      // the module is already warm in the browser cache.
+      appearanceSuspendedMainCube = false;
+      closeDialog(true);
+      lightingState = null;
+      navigate("lighting");
+      loadingPaint = new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 700)));
+    }
     try {
-      cubeStudio ||= await import("./cube-realistic.js");
+      const studioModule = cubeStudio ? Promise.resolve(cubeStudio) : import("./cube-realistic.js");
+      const [loadedStudio] = await Promise.all([studioModule, loadingPaint]);
+      cubeStudio ||= loadedStudio;
     } catch {
+      if (opening) navigate(lightingReturnView);
       toast("The lighting studio could not load on this device.", true);
       return;
-    }
-    if (view !== "lighting") {
-      lightingReturnView = view;
-      closeDialog(true);
     }
     const model = next?.cubeFinish ?? pref.cubeFinish,
       environment = next?.cubeEnvironment ?? pref.cubeEnvironment,
@@ -3273,7 +4419,7 @@ ${rankCard(status)}
     navigate("lighting");
   }
   function lightingStudioPage() {
-    if (!lightingState) return `<div class="lighting-loading">Opening lighting studio…</div>`;
+    if (!lightingState) return `<div class="lighting-loading" role="status"><span class="cube-throbber" aria-hidden="true"></span>Opening lighting studio…</div>`;
     const model = lightingState.cubeFinish,
       environment = lightingState.cubeEnvironment,
       environmentOptions = Object.entries(CUBE_ENVIRONMENTS).map(([value, item]) =>
@@ -3348,7 +4494,7 @@ ${rankCard(status)}
   // Everything that has to change when a cube setting changes, in one place:
   // the carousel calls it midway through its slide, every other control calls
   // it straight away.
-  function applyCubeSelection() {
+  function applyCubeSelection(crossFrom = null) {
     savePref();
     const carousel = $(".cube-carousel");
     if (carousel) carousel.dataset.model = pref.cubeFinish;
@@ -3357,19 +4503,23 @@ ${rankCard(status)}
     $$("[data-cube-environment]").forEach(el => el.setAttribute("aria-selected", String(el.dataset.cubeEnvironment === pref.cubeEnvironment)));
     if ($('[data-control="cube-wear"]')) $('[data-control="cube-wear"]').checked = pref.cubeWear;
     $$("[data-cube-core]").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.cubeCore === pref.cubeCore)));
+    $$("[data-cube-cross]").forEach(el => {
+      el.setAttribute("aria-pressed", String(el.dataset.cubeCross === pref.cubeCross));
+      const swatch = $("i", el);
+      if (swatch) swatch.style.background = CUBE_PALETTES[pref.cubePalette].colors[el.dataset.cubeCross];
+    });
     $$("[data-cube-dot]").forEach(el => el.classList.toggle("on", el.dataset.cubeDot === pref.cubeFinish));
     if ($("#cube-model-name")) {
       $("#cube-model-name").textContent = CUBE_MODELS[pref.cubeFinish].label;
-      $("#cube-model-detail").textContent = CUBE_MODELS[pref.cubeFinish].detail;
       $("#quality-value").textContent = CUBE_QUALITY[pref.cubeQuality].label;
-      $("#quality-detail").textContent = CUBE_QUALITY[pref.cubeQuality].detail;
       if ($("#environment-value")) $("#environment-value").textContent = CUBE_ENVIRONMENTS[pref.cubeEnvironment].label;
-      if ($("#environment-detail")) $("#environment-detail").textContent = CUBE_ENVIRONMENTS[pref.cubeEnvironment].detail;
-      $("#cube-finish-status").textContent = `${CUBE_MODELS[pref.cubeFinish].label} · ${CUBE_PALETTES[pref.cubePalette].label} · ${pref.cubeWear ? "Worn" : "Factory new"} · ${CUBE_CORES[pref.cubeCore].label} core · ${CUBE_QUALITY[pref.cubeQuality].label} quality · ${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}. Saved for every cube preview.`;
+      $("#cube-finish-status").textContent = "";
     }
     scene?.setAppearance();
     drawerScene?.setAppearance();
-    appearanceScene?.setAppearance();
+    if (crossFrom && crossFrom !== pref.cubeCross) appearanceScene?.animateCross(crossFrom, pref.cubeCross);
+    else appearanceScene?.setAppearance();
+    trainerThumbs.forEach(el => { if (el.firstElementChild) paintThumb(el); });
     warmCubeStudio();
   }
   // The cube on screen leaves towards the side the press pointed away from and
@@ -3542,8 +4692,44 @@ ${rankCard(status)}
           element.contains(selection.focusNode)),
     );
   }
+  function closeActivityPopover(panel = document) {
+    const popover = $(".activity-popover", panel);
+    if (popover) {
+      popover.hidden = true;
+      popover.removeAttribute("aria-label");
+    }
+    $$(".calendar-day.is-selected", panel).forEach((day) => {
+      day.classList.remove("is-selected");
+      day.setAttribute("aria-expanded", "false");
+    });
+  }
+  function positionActivityPopover(anchor, popover, panel) {
+    const rect = anchor.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const originX = panelRect.left + panel.clientLeft;
+    const originY = panelRect.top + panel.clientTop;
+    const margin = 8;
+    const gap = 8;
+    const left = Math.min(
+      Math.max(margin, rect.left - originX + rect.width / 2 - popover.offsetWidth / 2),
+      panel.clientWidth - popover.offsetWidth - margin,
+    );
+    let top = rect.bottom - originY + gap;
+    let placement = "below";
+    if (top + popover.offsetHeight > panel.clientHeight - margin && rect.top - originY - popover.offsetHeight - gap >= margin) {
+      top = rect.top - originY - popover.offsetHeight - gap;
+      placement = "above";
+    }
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+    popover.dataset.placement = placement;
+    popover.style.setProperty("--anchor-x", `${rect.left - originX + rect.width / 2 - left}px`);
+  }
   document.addEventListener("click", async (e) => {
     const b = e.target.closest("button,a.brand");
+    const activityPanel = e.target.closest(".activity-panel");
+    if (!e.target.closest(".calendar-day") && !e.target.closest(".activity-popover"))
+      closeActivityPopover(activityPanel || document);
     if (!e.target.closest(".quality-select")) closeQualityMenu();
     const row = e.target.closest("tr[data-solve]");
     if (row && !b) {
@@ -3590,7 +4776,18 @@ ${rankCard(status)}
       return;
     }
     if (b.dataset.dayInfo) {
-      $(".activity-day-info", b.closest(".activity-panel")).textContent = b.dataset.dayInfo;
+      const panel = b.closest(".activity-panel"), popover = $(".activity-popover", panel);
+      if (!panel || !popover) return;
+      const wasOpen = b.classList.contains("is-selected") && !popover.hidden;
+      closeActivityPopover(panel);
+      if (wasOpen) return;
+      const count = Number(b.dataset.dayCount) || 0;
+      b.classList.add("is-selected");
+      b.setAttribute("aria-expanded", "true");
+      popover.innerHTML = `<strong>${count.toLocaleString()} ${count === 1 ? "solve" : "solves"}</strong><span>${esc(b.dataset.dayDate)}</span>`;
+      popover.setAttribute("aria-label", b.dataset.dayInfo);
+      popover.hidden = false;
+      positionActivityPopover(b, popover, panel);
       return;
     }
     if (b.hasAttribute("data-penalty")) {
@@ -3628,9 +4825,11 @@ ${rankCard(status)}
       stepCubeModel(Number(b.dataset.cubeStep));
       return;
     }
-    if (b.dataset.cubePalette || b.dataset.cubeFinish || b.dataset.cubeQuality || b.dataset.cubeEnvironment || b.dataset.cubeCore) {
+    if (b.dataset.cubePalette || b.dataset.cubeFinish || b.dataset.cubeQuality || b.dataset.cubeEnvironment || b.dataset.cubeCore || b.dataset.cubeCross) {
+      const previousCross = pref.cubeCross;
       if (Object.hasOwn(CUBE_PALETTES, b.dataset.cubePalette ?? "")) pref.cubePalette = b.dataset.cubePalette;
       if (Object.hasOwn(CUBE_CORES, b.dataset.cubeCore ?? "")) pref.cubeCore = b.dataset.cubeCore;
+      if (Object.hasOwn(CUBE_CROSSES, b.dataset.cubeCross ?? "")) pref.cubeCross = b.dataset.cubeCross;
       if (Object.hasOwn(CUBE_MODELS, b.dataset.cubeFinish ?? "")) pref.cubeFinish = b.dataset.cubeFinish;
       if (Object.hasOwn(CUBE_QUALITY, b.dataset.cubeQuality ?? "")) pref.cubeQuality = b.dataset.cubeQuality;
       if (Object.hasOwn(CUBE_ENVIRONMENTS, b.dataset.cubeEnvironment ?? "")) pref.cubeEnvironment = b.dataset.cubeEnvironment;
@@ -3638,7 +4837,7 @@ ${rankCard(status)}
         closeQualityMenu();
         b.closest(".cube-setting")?.querySelector(".quality-trigger")?.focus();
       }
-      applyCubeSelection();
+      applyCubeSelection(b.dataset.cubeCross ? previousCross : null);
       return;
     }
     if (b.dataset.studioPalette && lightingState && Object.hasOwn(CUBE_PALETTES, b.dataset.studioPalette)) {
@@ -3665,6 +4864,49 @@ ${rankCard(status)}
       pref.accent = b.dataset.accentChoice;
       savePref();
       applyTheme();
+      return;
+    }
+    if (b.dataset.trainerView) {
+      pref.trainerView = b.dataset.trainerView;
+      savePref();
+      $$('[data-trainer-view]').forEach((button) => {
+        const active = button.dataset.trainerView === pref.trainerView;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      trainerThumbs.forEach((thumb) => {
+        thumb.dataset.mode = pref.trainerView;
+        if (thumb.firstElementChild) paintThumb(thumb);
+      });
+      return;
+    }
+    if (b.dataset.caseOpen) {
+      const thumb = $("[data-case-thumb]", b);
+      if (thumb?.dataset.suppressOpen === "true") {
+        delete thumb.dataset.suppressOpen;
+        return;
+      }
+      openCase(b.dataset.caseOpen);
+      return;
+    }
+    if (b.dataset.trainMode) {
+      setTrainMode(b.dataset.trainMode);
+      return;
+    }
+    if (caseDrawer && (b.dataset.algPick || b.dataset.algStar || b.dataset.algDelete)) {
+      const set = algSets().find((x) => x.id === caseDrawer.setId),
+        entry = set?.cases.find((c) => c.id === caseDrawer.caseId);
+      if (!entry) return;
+      if (b.dataset.algDelete) removeAlgorithm(entry, b.dataset.algDelete);
+      else {
+        const algId = b.dataset.algPick || b.dataset.algStar;
+        if (b.dataset.algStar) {
+          entry.favoriteId = algId;
+          persist();
+        }
+        caseDrawer.algId = algId;
+        drawCaseDialog();
+      }
       return;
     }
     if (b.dataset.cube) {
@@ -3724,6 +4966,47 @@ ${rankCard(status)}
         break;
       case "manage":
         manage();
+        break;
+      case "new-set":
+        newSet();
+        break;
+      case "manage-set":
+        manageSet();
+        break;
+      case "manage-case":
+        manageCase();
+        break;
+      case "delete-case":
+        deleteCase();
+        break;
+      case "delete-set":
+        confirmDeleteSet();
+        break;
+      case "confirm-delete-set":
+        deleteSet();
+        break;
+      case "restore-sets":
+        restoreSets();
+        break;
+      case "new-group":
+        newGroup();
+        break;
+      case "new-case":
+        newCaseDialog(b.dataset.group || "");
+        break;
+      case "clear-selection":
+        trainerSelection.clear();
+        render();
+        break;
+      case "select-all":
+        for (const entry of activeSet()?.cases || []) trainerSelection.add(entry.id);
+        render();
+        break;
+      case "train":
+        openTrainDialog();
+        break;
+      case "end-round":
+        endRound();
         break;
       case "delete-category":
         confirmDeleteCategory();
@@ -3833,6 +5116,14 @@ ${rankCard(status)}
   });
   document.addEventListener("dragstart", (e) => e.preventDefault());
   document.addEventListener("change", async (e) => {
+    if (e.target.dataset.caseCheck) {
+      pickCase(e.target.dataset.caseCheck, e.target.checked);
+      return;
+    }
+    if (e.target.dataset.groupCheck !== undefined) {
+      pickGroup(e.target.dataset.groupCheck, e.target.checked);
+      return;
+    }
     const key = e.target.dataset.control;
     if (!key || timerBusy()) return;
     switch (key) {
@@ -3919,6 +5210,15 @@ ${rankCard(status)}
       case "demo-effect":
         playDemoEffect();
         return;
+      case "alg-set":
+        if (e.target.value === "__new__") {
+          e.target.value = activeSet()?.id || "";
+          newSet();
+          return;
+        }
+        pref.trainerSet = e.target.value;
+        trainerSelection.clear();
+        break;
       case "range":
         if (view === "insights") pref.insightsRange = e.target.value;
         else pref.range = e.target.value;
@@ -3976,6 +5276,9 @@ ${rankCard(status)}
       case "press-start":
         pref.pressToStart = e.target.checked;
         break;
+      case "mouse-click-start":
+        pref.mouseClickStart = e.target.checked;
+        break;
       case "sort":
         sort = e.target.value;
         libraryCount = LIBRARY_BATCH;
@@ -3997,6 +5300,21 @@ ${rankCard(status)}
     render();
   });
   document.addEventListener("input", (e) => {
+    if (e.target.dataset.control === "trainer-speed") {
+      // The slider reads left to right as slower to faster; the scene works in
+      // milliseconds per move, so the two run opposite ways.
+      pref.trainerSpeed = 300 - Number(e.target.value);
+      savePref();
+      if (drawerScene) drawerScene.moveDuration = pref.trainerSpeed;
+      return;
+    }
+    if (e.target.name === "count" && $("#train-form")) {
+      $("#train-note").textContent = trainNote(
+        $("#train-form").dataset.mode,
+        Number(e.target.value),
+      );
+      return;
+    }
     const lightingKey = e.target.dataset.lightingControl;
     if (lightingKey && lightingState && LIGHTING_CONTROLS[lightingKey]) {
       lightingState.values[lightingKey] = Number(e.target.value);
@@ -4020,7 +5338,8 @@ ${rankCard(status)}
   });
   async function init() {
     renderIcons();
-    $("#main").innerHTML = '<div class="loading">Loading…</div>';
+    $("#main").innerHTML = '<div class="loading" role="status"><span class="cube-throbber" aria-hidden="true"></span>Loading…</div>';
+    const loadingPaint = new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 800)));
     let cached;
     try {
       cached = JSON.parse(localStorage.getItem(STORE) || "null");
@@ -4070,10 +5389,16 @@ ${rankCard(status)}
     if (!state.categories.some((c) => c.id === pref.active))
       pref.active = state.categories[0]?.id || null;
     const initial = location.hash.slice(1);
-    if (["overview", "timer", "solves", "insights", "effects"].includes(initial))
+    if (
+      ["overview", "timer", "trainer", "solves", "insights", "effects"].includes(
+        initial,
+      )
+    )
       view = initial;
+    if (seedAlgSets()) persist();
     savePref();
     startScrambler();
+    await loadingPaint;
     render();
     warmCubeStudio();
     globalThis.navigator?.mediaDevices?.addEventListener?.("devicechange", () => {

@@ -26,7 +26,7 @@ Running this file rewrites only the generated files in assets/wear/.
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +63,20 @@ STEEPEST_PERCENTILE = 99.9
 # baked coat identical to the one the renderer generates.
 COATING_SIZE = 512
 COATING_STRENGTH = 1.15
+
+# 64 unique edge-locked masks, 256 texels each, with transparent gutters.
+# Keep the 8x8 layout and one-unit UV footprint in sync with faceGeometry().
+STICKER_DAMAGE_GRID = 8
+STICKER_DAMAGE_TILE = 256
+# These are deliberately named controls: the atlas is regenerated offline, so
+# changing them does not add any runtime cost.
+STICKER_OUTER_SIDE_WEIGHT = .08
+# Most missing film is in shallow strips; only a few stickers have a deep tear.
+STICKER_SEVERITY = (.30, .65, 1.0, 1.55)
+STICKER_SEVERITY_PROBABILITY = (.12, .23, .48, .17)
+STICKER_PATCH_WIDTH = (.24, .56)
+STICKER_PATCH_DEPTH = (.032, .085)
+STICKER_CENTER_SEVERITY = (.16, .32)
 
 
 def smoothstep(edge0, edge1, value):
@@ -405,6 +419,73 @@ def scratch_field():
     return height, cut, scuff * cluster, fingerprint_layer(rng)
 
 
+def sticker_damage_atlas():
+    """Edge-connected tears in thin vinyl, in the sticker's physical frame.
+
+    A few asymmetric strips expose the black backing. Short jagged breaks live
+    on those strips, not on the intact interior or uniformly around every edge.
+    PNG rows run down; local sticker Y runs up, as in faceGeometry().
+    """
+    grid, tile = STICKER_DAMAGE_GRID, STICKER_DAMAGE_TILE
+    atlas = Image.new("L", (grid * tile, grid * tile), 0)
+    axis = (np.arange(tile) + .5) / tile - .5
+    x, image_y = np.meshgrid(axis, axis)
+    y = -image_y
+    qx, qy = np.abs(x) - (.435 - .066), np.abs(y) - (.435 - .066)
+    pristine = .066 - (np.hypot(np.maximum(qx, 0), np.maximum(qy, 0))
+                         + np.minimum(np.maximum(qx, qy), 0))
+
+    for pattern in range(grid * grid):
+        rng = np.random.default_rng(20260909 + pattern * 7919)
+        cell = pattern % 9
+        center = cell == 4
+        severity = (rng.uniform(*STICKER_CENTER_SEVERITY) if center else
+                    rng.choice(STICKER_SEVERITY, p=STICKER_SEVERITY_PROBABILITY)
+                    * rng.uniform(.85, 1.15))
+        col, row = cell % 3, cell // 3
+        outer = {s for s, condition in enumerate((col == 0, row == 0, col == 2, row == 2)) if condition}
+        weights = np.array([STICKER_OUTER_SIDE_WEIGHT if s in outer else 1.0 for s in range(4)])
+        # One dominant seam, sometimes a second. Avoid shrinking all four sides.
+        count = (int(rng.choice([1, 2], p=[.15, .85])) if len(outer) == 2 else
+                 int(rng.choice([1, 2, 3], p=[.38, .54, .08])))
+        active = rng.choice(4, count, replace=False, p=weights / weights.sum())
+        distance = pristine.copy()
+        for side, (along, inward) in enumerate(((y, x + .435), (x, .435 - y),
+                                                (y, .435 - x), (x, y + .435))):
+            retreat = np.zeros_like(x)
+            if side in active:
+                for patch in range(int(rng.choice([1, 2], p=[.65, .35]))):
+                    # Some tears start at a corner; many sit partway along a seam.
+                    middle = rng.uniform(-.32, .32)
+                    if rng.random() < .30:
+                        middle = rng.choice([-1, 1]) * rng.uniform(.30, .40)
+                    width = rng.uniform(*STICKER_PATCH_WIDTH)
+                    left, right = middle - width / 2, middle + width / 2
+                    # Unequal short shoulders and a broken plateau, not an ellipse.
+                    rise, fall = rng.uniform(.020, .065, 2)
+                    envelope = smoothstep(left-rise, left+rise, along) * (1-smoothstep(right-fall, right+fall, along))
+                    depth = rng.uniform(*STICKER_PATCH_DEPTH) * severity
+                    coarse = np.interp(along, np.linspace(-.5, .5, 19), rng.uniform(-1, 1, 19))
+                    medium = np.interp(along, np.linspace(-.5, .5, 61), rng.uniform(-1, 1, 61))
+                    fine = np.interp(along, np.linspace(-.5, .5, 137), rng.uniform(-1, 1, 137))
+                    torn = depth * (1 + coarse * .32) + severity * (.011 * medium + .0015 * fine)
+                    # Merge tears by maximum: overlapping wear must not add into a crater.
+                    retreat = np.maximum(retreat, envelope * np.maximum(torn, 0))
+                # Small angular nicks cluster along this same worn seam.
+                for _ in range(int(rng.integers(2, 6))):
+                    at = rng.uniform(-.39, .39)
+                    halfwidth = rng.uniform(.008, .025)
+                    nick = np.maximum(1 - np.abs(along-at)/halfwidth, 0)
+                    retreat = np.maximum(retreat, nick * rng.uniform(.006, .022) * severity)
+            # A hard intersection retains the torn contour. The old smooth-min
+            # rounded every junction and even eroded otherwise pristine corners.
+            distance = np.minimum(distance, inward - retreat)
+        coverage = np.clip(distance * tile + .5, 0, 1)
+        atlas.paste(Image.fromarray(np.rint(coverage * 255).astype(np.uint8)),
+                    ((pattern % grid) * tile, (pattern // grid) * tile))
+    return atlas
+
+
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     height, cut, scuff, prints = scratch_field()
@@ -436,6 +517,7 @@ def main():
     Image.fromarray(np.rint(worn_roughness * 255.0).astype(np.uint8)).save(
         OUTPUT / "worn-plastic-roughness.png", optimize=True
     )
+    sticker_damage_atlas().save(OUTPUT / "worn-sticker-alpha.png", optimize=True)
 
     tilt = np.degrees(np.arctan2(np.hypot(plastic[:, :, 0], plastic[:, :, 1]), plastic[:, :, 2]))
     print("tilt deg: median {:.2f}  p90 {:.2f}  p99 {:.2f}  max {:.2f}".format(*np.percentile(tilt, [50, 90, 99]), tilt.max()))
@@ -446,4 +528,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--stickers-only" in sys.argv:
+        OUTPUT.mkdir(parents=True, exist_ok=True)
+        sticker_damage_atlas().save(OUTPUT / "worn-sticker-alpha.png", optimize=True)
+    else:
+        main()

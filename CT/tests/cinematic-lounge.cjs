@@ -64,6 +64,28 @@ const server = http.createServer((req, res) => {
       }, effect);
       await page.locator('#stage').screenshot({ path: path.join(output, `studio-small-08-${effect}.png`) });
     }
+    // The bloom target is screen-space. It must be regenerated while the
+    // lighting-studio camera orbits, otherwise its highlights stay pinned to
+    // the previous frame and appear to float over the cube.
+    const interactionBloom = await page.evaluate(() => {
+      cube.postMaterial.uniforms.occlusion.value = productionLens.occlusion;
+      const checksum = () => {
+        const target = cube.bloomB;
+        const pixels = new Uint16Array(target.width * target.height * 4);
+        cube.renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, pixels);
+        let hash = 2166136261;
+        for (const value of pixels) hash = Math.imul(hash ^ value, 16777619);
+        return hash >>> 0;
+      };
+      cube.setInteractionActive(true);
+      cube.orbit(-15, -20, 1);
+      const before = checksum();
+      cube.orbit(-15, 24, 1);
+      const after = checksum();
+      cube.setInteractionActive(false);
+      return { before, after };
+    });
+    assert.notEqual(interactionBloom.before, interactionBloom.after, 'Halation follows a live studio orbit');
     // An isolated HDR impulse must become one smooth lobe, never replicas.
     const profile = await page.evaluate(async () => {
       const T = await import('/assets/vendor/three.module.js');

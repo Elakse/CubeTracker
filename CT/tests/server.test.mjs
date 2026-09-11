@@ -150,6 +150,22 @@ test("server serves the app, preserves saves, rejects stale writes and reloads s
       });
       assert.equal(response.status, 403);
     });
+    await t.test("OG lighting saves independently of sticker and speedcube calibrations", async () => {
+      const file = path.join(dir, "assets", "environments.js");
+      const tuning = source => JSON.parse(source.match(/\/\* cube-tuning:start \*\/\s*([\s\S]*?)\s*\/\* cube-tuning:end \*\//)[1]);
+      const before = tuning(await readFile(file, "utf8"));
+      const values = { exposure: .65, hemi: .7, key: 1.14, rim: 1.05, fill: .83, env: .765, gloss: .32, glossRough: .1955 };
+      const response = await fetch(`http://127.0.0.1:${port}/api/environment-tuning`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ environment: "studio", model: "og", values }),
+      });
+      assert.equal(response.status, 200);
+      const after = tuning(await readFile(file, "utf8"));
+      assert.deepEqual(after.studio.og, values);
+      delete after.studio.og;
+      assert.deepEqual(after, before);
+      assert.equal((await get()).capabilities.environmentTuning, 2);
+    });
     assert.equal((await get()).categories.length, 0);
     const a = {
         id: "test-a-123",

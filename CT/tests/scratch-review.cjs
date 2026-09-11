@@ -58,7 +58,17 @@ const server = http.createServer((req, res) => {
           window.cube = new RealisticCube(document.querySelector('#stage'), () => { throw Error('WebGL unavailable'); }, model, quality, 'studio', wear);
           cube.setPalette({ U: '#fafcff', R: '#eb3046', F: '#16bd6b', D: '#ffdb19', L: '#ff821c', B: '#2474ef' });
         }, { model, quality: QUALITY, wear: !blocked });
-        if (!blocked) await page.locator('canvas[data-wear="loaded"]').waitFor({ timeout: 20000 });
+        if (!blocked) {
+          await page.locator('canvas[data-wear="loaded"]').waitFor({ timeout: 20000 });
+          if (model === 'stickers') await page.locator('canvas[data-wear-sticker="loaded"]').waitFor({ timeout: 20000 });
+          if (model === 'stickers') {
+            const outlines = await page.evaluate(() => new Set(cube.faces.map(face => {
+              const uv = face.geometry.getAttribute('uv1');
+              return `${Math.floor(uv.getX(uv.count - 1) * 8)},${Math.floor(uv.getY(uv.count - 1) * 8)}`;
+            })).size);
+            if (outlines !== 54) throw Error(`Expected 54 unique sticker outlines, got ${outlines}`);
+          }
+        }
         if (model === 'speedcube' || model === 'uv') await page.locator('canvas[data-logo="loaded"]').waitFor({ timeout: 20000 });
         console.log(blocked ? 'clean' : 'wear', model, await page.evaluate(() => {
           const material = cube.faceMaterials.U;
@@ -68,6 +78,9 @@ const server = http.createServer((req, res) => {
             normal: material.normalMap?.name ?? (material.bumpMap ? 'grain bump' : 'none'),
             normalScale: material.normalScale ? [material.normalScale.x, material.normalScale.y] : null,
             coatNormal: material.clearcoatNormalMap?.name ?? 'none',
+            alpha: material.alphaMap?.name ?? 'none',
+            alphaUv: material.alphaMap?.channel ?? null,
+            alphaTest: material.alphaTest,
           });
         }));
         for (const [name, pitch, yaw, zoom, moves] of VIEWS) {
@@ -96,7 +109,7 @@ const server = http.createServer((req, res) => {
         await page.evaluate(() => Object.assign(document.querySelector('#stage').style, { width: '800px', height: '800px' }));
         await page.evaluate(() => cube.destroy());
       }
-      if (errors.length) console.error('PAGE ERRORS', blocked ? '(clean)' : '(wear)', errors);
+      if (errors.length) throw Error(`PAGE ERRORS ${blocked ? '(clean)' : '(wear)'}: ${errors.join('; ')}`);
       await page.close();
     }
     // Difference statistics and an amplified side-by-side sheet per view.

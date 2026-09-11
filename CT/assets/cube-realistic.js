@@ -42,10 +42,26 @@ const WEAR_MATERIAL_OFFSET = {
   gloss: .51 - .85,
   glossRough: .120 - .070,
 };
-const withWearMaterial = (values, wear) => wear ? {
+// Shape, surface and lighting are independent: OG uses the speedcube moulds
+// with the existing vinyl response. A new surface need not fork turn logic.
+const MODELS = {
+  tiles: { shape: "tiles", surface: "tiles", rig: "tiles" },
+  stickers: { shape: "tiles", surface: "vinyl", rig: "stickers" },
+  speedcube: { shape: "speedcube", surface: "abs", rig: "speedcube" },
+  uv: { shape: "speedcube", surface: "uv", rig: "uv" },
+  og: { shape: "speedcube", surface: "vinyl", rig: "stickers" },
+};
+const SCULPTED = model => MODELS[model]?.shape === "speedcube";
+const COATED = model => MODELS[model]?.surface === "uv";
+const STICKERED = model => MODELS[model]?.surface === "vinyl";
+const SEPARATE_HOLDERS = model => SCULPTED(model) && STICKERED(model);
+
+// Vinyl keeps a reflective laminate on the surviving film. The plastic's
+// additive gloss reduction would zero its .32 clearcoat and make it chalky.
+const withWearMaterial = (values, wear, model) => wear ? {
   ...values,
-  gloss: Math.max(0, Math.min(1, values.gloss + WEAR_MATERIAL_OFFSET.gloss)),
-  glossRough: Math.max(.03, Math.min(.5, values.glossRough + WEAR_MATERIAL_OFFSET.glossRough)),
+  gloss: Math.max(0, Math.min(1, STICKERED(model) ? values.gloss * .85 : values.gloss + WEAR_MATERIAL_OFFSET.gloss)),
+  glossRough: Math.max(.03, Math.min(.5, values.glossRough + (STICKERED(model) ? .02 : WEAR_MATERIAL_OFFSET.glossRough))),
 } : { ...values };
 
 // How hard each finish wears. One table, for the same reason the rigs are one
@@ -65,7 +81,7 @@ const withWearMaterial = (values, wear) => wear ? {
 // blended into it — is what the viewer actually sees.
 const WEAR = {
   tiles:     { normal: 1.25, coat: 0 },
-  stickers:  { normal: 1.05, coat: 0 },
+  stickers:  { normal: .42, coat: 0 },
   speedcube: { normal: 1.30, coat: 0 },
   // The coat was at 1.05 and the red face came out looking like a cracked
   // windscreen: a near-mirror multiplies whatever you give it, so the number
@@ -74,10 +90,13 @@ const WEAR = {
   // out — a coated cube should still be scratched under the coat, not only in it.
   uv:        { normal: .70, coat: .80 },
 };
-// Both speedcubes share their molded outlines. UV pools gently near the cap's
-// perimeter and blends through a shallow dip into an almost-flat center.
-const SCULPTED = model => model === "speedcube" || model === "uv";
-const COATED = model => model === "uv";
+const SURFACES = {
+  tiles: { roughness: .235, bump: .00065, ior: 1.46, wear: WEAR.tiles },
+  vinyl: { roughness: .32, bump: .00065, ior: 1.46, wear: WEAR.stickers },
+  abs: { roughness: .30, bump: .00035, ior: 1.46, wear: WEAR.speedcube },
+  uv: { roughness: .17, bump: .00012, ior: 1.52, wear: WEAR.uv },
+};
+// UV pools gently near the shared moulded cap perimeter.
 const COATING_CENTER = .0195;
 
 function coatingProfile() {
@@ -162,13 +181,13 @@ const RIGS = {
 };
 const baseRigFor = environment => ENVIRONMENTS[environment]?.generated ? RIGS.studio : RIGS.photographic;
 const tuningFor = (model, environment) => ({
-  ...baseRigFor(environment)[model],
+  ...baseRigFor(environment)[MODELS[model]?.rig ?? model],
   ...(TUNING?.[environment]?.[model] || {}),
 });
 
 // The controls and the renderer read the exact same numbers.
 export function cubeTuning(model, environment, defaults = false) {
-  const values = defaults ? baseRigFor(environment)[model] : tuningFor(model, environment);
+  const values = defaults ? baseRigFor(environment)[MODELS[model]?.rig ?? model] : tuningFor(model, environment);
   return values ? { ...values } : null;
 }
 
@@ -241,16 +260,23 @@ const LENS = {
 const CINEMATIC_BUDGET = {
   maxEightSamplePixels: 2_000_000,
   compactShadowEdge: 900,
+  // Cube Studio can cover most of a large monitor. A DPR cap alone does not
+  // protect that path: 1x at 2560x1400 is still 3.6 million fragments, each
+  // running the lens, depth-of-field and occlusion shader. Match its moving
+  // frame to the pixel count of the already-fluid timer preview, then spend a
+  // larger but bounded budget on the final still after the pointer is released.
+  maxInteractionPixels: 900_000,
+  maxAnimationPixels: 2_000_000,
+  maxStillPixels: 4_000_000,
 };
 
 // The cube's internals, seen through the gaps and while a layer is mid-turn.
 // Colour is the whole choice: every option is the same moulded plastic, so the
-// finish is written once here instead of once per colour. White is deliberately
-// off-white and lifted by its environment term — solid white plastic that thin
-// reads as slightly translucent, and a pure 0xffffff core blows out next to the
-// caps. Ids match CUBE_CORES in app.js.
+// finish is written once here instead of once per colour. The White option is
+// intentionally dark grey so the recessed core reads as shadowed without
+// relying on unavailable ambient occlusion. Ids match CUBE_CORES in app.js.
 const CORE_FINISH = {
-  white: { color: 0xdcddd6, roughness: .34, clearcoat: .30, clearcoatRoughness: .16, env: .52 },
+  white: { color: 0x4a4d50, roughness: .34, clearcoat: .30, clearcoatRoughness: .16, env: .52 },
   black: { color: 0x16181b, roughness: .32, clearcoat: .30, clearcoatRoughness: .16, env: .34 },
   green: { color: 0x1d7a45, roughness: .33, clearcoat: .30, clearcoatRoughness: .16, env: .40 },
 };
@@ -268,6 +294,9 @@ const sharedMap = (key, build) => {
   if (!SHARED.has(key)) SHARED.set(key, build());
   return SHARED.get(key);
 };
+// Bump this when the baked atlas changes so an already-open app cannot keep
+// rendering a stale alpha mask from the previous session.
+const STICKER_WEAR_MAP_KEY = "wear-sticker-alpha-v7";
 
 // Photographic environments ship as Radiance RGBE files. Fetched once and held
 // as raw floats; the PMREM step needs a renderer and so happens per cube.
@@ -306,6 +335,7 @@ export function warmCube(model = "tiles", quality = "balanced", environment = "s
   if (wear) {
     sharedMap("wear-normal", scratchNormalMap);
     sharedMap("wear-roughness", scratchRoughnessMap);
+    if (STICKERED(model)) sharedMap(STICKER_WEAR_MAP_KEY, stickerDamageMap);
     if (COATED(model)) sharedMap("wear-uv-normal", scratchClearcoatNormalMap);
   }
   if (COATED(model)) sharedMap("coating", () => coatingNormal());
@@ -420,6 +450,16 @@ function scratchClearcoatNormalMap() {
   return wearTexture("worn-uv-clearcoat-normal.png", "Worn UV clearcoat normal");
 }
 
+function stickerDamageMap() {
+  // Alpha uses UV channel 1: unlike the scratch maps, chipped vinyl has to stay
+  // attached to the sticker perimeter. Each 256px tile has a transparent
+  // gutter; mipmaps filter the torn edge when the cube is small or oblique.
+  const texture = wearTexture("worn-sticker-alpha.png?v=7", "Worn sticker cutout");
+  texture.channel = 1;
+  texture.wrapS = texture.wrapT = T.ClampToEdgeWrapping;
+  return texture;
+}
+
 function coatingNormal(size = 512, strength = .30) {
   // Orange peel: what a sprayed, UV-cured coat actually looks like. The coat
   // does not copy the plastic's micro-texture, it floods it and sets with its
@@ -462,10 +502,13 @@ function capVariants() {
   // Deterministic, so a cube looks the same every time it is built.
   let seed = 991;
   const next = () => { seed = (1664525 * seed + 1013904223) >>> 0; return seed / 4294967296; };
-  return Array.from({ length: 54 }, () => ({
-    shift: [next(), next()],
-    tint: [1 + (next() - .5) * .035, 1 + (next() - .5) * .035, 1 + (next() - .5) * .035],
-  }));
+  return Array.from({ length: 54 }, (_, index) => {
+    const shift = [next(), next()];
+    const tint = [1 + (next() - .5) * .035, 1 + (next() - .5) * .035, 1 + (next() - .5) * .035];
+    // Unique film outlines without changing the scratch/tint random sequence.
+    const chip = index;
+    return { shift, tint, chip, cell: index % 9 };
+  });
 }
 
 function softboxMap(size = 128) {
@@ -487,12 +530,16 @@ function softboxMap(size = 128) {
   return texture;
 }
 
-function faceGeometry(model = "tiles", cell = 4, variant = null) {
+const VINYL_PROFILE = [[.435, .065, 0], [.437, .067, .0012], [.435, .066, .0024], [.32, .06, .0024], [.12, .04, .0024]];
+const OG_VINYL_PROFILE = [[.400, .044, .0206], [.402, .046, .0218], [.400, .044, .023], [.30, .055, .023], [.12, .04, .023]];
+
+function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKERED(model) ? "sticker" : "cap") {
+  const film = layer === "sticker", shapedFilm = film && SCULPTED(model);
   // Concentric rounded-square contours form a molded, slightly convex cap.
   // The crown bends softbox reflections across the face instead of leaving a
   // perfectly flat, sticker-like surface. Shared vertices keep shoulders smooth.
-  const profiles = model === "stickers"
-    ? [[.435, .065, 0], [.437, .067, .0012], [.435, .066, .0024], [.32, .06, .0024], [.12, .04, .0024]]
+  const profiles = film
+    ? shapedFilm ? OG_VINYL_PROFILE : VINYL_PROFILE
     : COATED(model)
       ? coatingProfile()
     : SCULPTED(model)
@@ -507,7 +554,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
       ? [[.48,.04,-.045], [.494,.043,-.021], [.497,.048,-.004], [.4875,.0499,.00151], [.4775,.052,.00634], [.4673,.054,.01047], [.4568,.0562,.01388], [.4461,.0583,.01655], [.4353,.0605,.01846], [.4243,.0628,.01962], [.4133,.065,.02], [.32,.07,.02], [.12,.05,.02]]
       : [[.423, .092, 0], [.444, .108, .010], [.450, .116, .026], [.446, .122, .044], [.432, .127, .060], [.392, .134, .070], [.32, .12, .078], [.23, .09, .085], [.12, .05, .089]];
   const col = cell % 3 - 1, row = 1 - Math.floor(cell / 3);
-  const positions = [], uvs = [], shades = [], indices = [], steps = 12;
+  const positions = [], uvs = [], chipUvs = [], shades = [], indices = [], steps = 12;
   // Straight spans are sampled on the coated model only. Sampling them on every
   // model was tried and reverted: it doubles every cap and changes the shading
   // normals by hundredths of a degree. The X across a sculpted cap is not a
@@ -520,7 +567,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
   // Fake contact occlusion. The groove where two pieces meet is far too small
   // for a shadow map to resolve, but the eye reads its absence as "rendered by
   // a computer", so rings sitting deeper than the crown darken toward AO_FLOOR.
-  const AO_FLOOR = SCULPTED(model) ? .55 : undefined;
+  const AO_FLOOR = SCULPTED(model) && !film ? .55 : undefined;
   const depths = profiles.map(profile => profile[2]), lowest = Math.min(...depths);
   const span = (Math.max(...depths) - lowest || 1) * .7;
   // The moulding tint rides in the same attribute as the occlusion, so per-cap
@@ -529,6 +576,24 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
   // between them interpolates across these coarse rings as a four-pointed star.
   const tint = variant && variant.tint ? variant.tint : [1, 1, 1];
   const shift = variant ? variant.shift : [0, 0];
+  const chip = variant?.chip ?? 0;
+  // The alpha atlas is 8x8. Its coordinates are deliberately derived from the
+  // unshifted cap position: scratches may roll to a unique patch on each cap,
+  // but a missing piece of vinyl must remain locked to a real sticker edge.
+  // The baked PNG is indexed top-to-bottom in both tile rows and pixels, while
+  // WebGL samples textures from the bottom. Flip the atlas row; the bake uses
+  // upward local Y, so local Y stays positive. Scratch UVs are independent.
+  const atlasRow = 7 - Math.floor(chip / 8);
+  const chipUv = (x, y) => [(chip % 8 + x + .5) / 8, (atlasRow + y + .5) / 8];
+  // Reuse the damage atlas by wrapping its rounded-square perimeter onto each
+  // film outline. Tears stay at the real edge of D-shaped and circular stickers.
+  // Scratch UVs remain in physical face coordinates and are not stretched.
+  const filmChipUv = (ring, i) => {
+    const [h, r] = VINYL_PROFILE[ring], corner = Math.floor(i / (steps + 1));
+    const [sx, sy] = [[1,1],[-1,1],[-1,-1],[1,-1]][corner];
+    const angle = (corner + i % (steps + 1) / steps) * Math.PI / 2;
+    return chipUv(sx * (h - r) + r * Math.cos(angle), sy * (h - r) + r * Math.sin(angle));
+  };
   // A variant carrying only a shift wants a different patch of the wear map,
   // not a different colour, and must not drag a whole unused colour attribute
   // along with it — that is the cheap form used below detail quality.
@@ -538,7 +603,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
     // rounded octagonal square flowing into a circular inner cap. UV keeps
     // the longer, coated shoulder; the uncoated speedcube uses its original
     // shallower profile and center height.
-    const centerRings = COATED(model) ? [
+    const centerRings = shapedFilm ? profiles.map(([h, r, z]) => [h, r, z, 0]) : COATED(model) ? [
       [.480, .040, -.045, 1], [.494, .043, -.021, 1], [.497, .160, -.004, 1],
       [.490, .170, .004, 1], [.475, .210, .008, .95], [.465, .250, .013, .75],
       [.460, .300, .018, .45], [.445, .350, .024, 0], [.365, .365, .0215, 0],
@@ -570,23 +635,28 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
           dense.push([end[0] + (edgeEnd[0] - end[0]) * t, end[1] + (edgeEnd[1] - end[1]) * t]);
         }
       }
-      const lengths = [0];
-      for (let i = 1; i <= dense.length; i++) {
-        const a = dense[i - 1], b = dense[i % dense.length];
-        lengths.push(lengths[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
-      }
-      const perimeter = lengths[dense.length];
+      // This contour is blended index-for-index with a circle below. Sampling
+      // it by perimeter length gives index zero a different polar angle from
+      // the circle's index zero, so intermediate rings shear around the center
+      // like a twist. Intersect each circle ray with the rounded polygon instead:
+      // both endpoints then share theta and their interpolation stays radial.
       return Array.from({ length: count }, (_, i) => {
-        const target = i / count * perimeter;
-        let segment = 0;
-        while (segment < dense.length - 1 && lengths[segment + 1] < target) segment++;
-        const a = dense[segment], b = dense[(segment + 1) % dense.length], span = lengths[segment + 1] - lengths[segment] || 1;
-        const t = (target - lengths[segment]) / span;
-        return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        const theta = i / count * Math.PI * 2, dx = Math.cos(theta), dy = Math.sin(theta);
+        let radius = Infinity;
+        for (let segment = 0; segment < dense.length; segment++) {
+          const a = dense[segment], b = dense[(segment + 1) % dense.length];
+          const ex = b[0] - a[0], ey = b[1] - a[1], denominator = dx * ey - dy * ex;
+          if (Math.abs(denominator) < 1e-9) continue;
+          const rayDistance = (a[0] * ey - a[1] * ex) / denominator;
+          const edgeDistance = (a[0] * dy - a[1] * dx) / denominator;
+          if (rayDistance >= 0 && edgeDistance >= -1e-9 && edgeDistance <= 1 + 1e-9)
+            radius = Math.min(radius, rayDistance);
+        }
+        return Number.isFinite(radius) ? [dx * radius, dy * radius] : [dx * h, dy * h];
       });
     };
-    const radialPositions = [], radialUvs = [], radialShades = [], radialIndices = [];
-    for (const [h, r, z, squareMix] of centerRings) {
+    const radialPositions = [], radialUvs = [], radialChipUvs = [], radialShades = [], radialIndices = [];
+    for (const [ring, [h, r, z, squareMix]] of centerRings.entries()) {
       const t = Math.min(1, (z - lowest) / span), ramp = t * t * (3 - 2 * t);
       const shade = AO_FLOOR === undefined ? 1 : AO_FLOOR + (1 - AO_FLOOR) * ramp;
       const squarePoints = chamferedSquareContour(h);
@@ -597,6 +667,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
         const y = circleY + (squarePoints[i][1] - circleY) * squareMix;
         radialPositions.push(x, y, z);
         radialUvs.push(x / .9 + .5 + shift[0], y / .9 + .5 + shift[1]);
+        if (film) radialChipUvs.push(...filmChipUv(ring, i));
         if (shaded) radialShades.push(shade * tint[0], shade * tint[1], shade * tint[2]);
       }
     }
@@ -605,8 +676,9 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
       radialIndices.push(a, b, a + count, b, b + count, a + count);
     }
     const radialCenter = radialPositions.length / 3;
-    const centerHeight = COATED(model) ? COATING_CENTER : .020;
+    const centerHeight = shapedFilm ? .023 : COATED(model) ? COATING_CENTER : .020;
     radialPositions.push(0, 0, centerHeight); radialUvs.push(.5 + shift[0], .5 + shift[1]);
+    if (film) radialChipUvs.push(...chipUv(0, 0));
     if (shaded) radialShades.push(tint[0], tint[1], tint[2]);
     const radialLast = (centerRings.length - 1) * count;
     for (let i = 0; i < count; i++) radialIndices.push(radialLast + i, radialLast + (i + 1) % count, radialCenter);
@@ -614,6 +686,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
     radialGeometry.setAttribute("position", new T.Float32BufferAttribute(radialPositions, 3));
     radialGeometry.setAttribute("uv", new T.Float32BufferAttribute(radialUvs, 2));
     if (shaded) radialGeometry.setAttribute("color", new T.Float32BufferAttribute(radialShades, 3));
+    if (film) radialGeometry.setAttribute("uv1", new T.Float32BufferAttribute(radialChipUvs, 2));
     radialGeometry.setIndex(radialIndices);
     radialGeometry.computeVertexNormals();
     const radialNormals = radialGeometry.getAttribute("normal");
@@ -625,7 +698,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
     }
     return radialGeometry;
   }
-  for (const [h, r, z] of profiles) {
+  for (const [ring, [h, r, z]] of profiles.entries()) {
     const t = Math.min(1, (z - lowest) / span), ramp = t * t * (3 - 2 * t);
     const shade = AO_FLOOR === undefined ? 1 : AO_FLOOR + (1 - AO_FLOOR) * ramp;
     [[1, 1], [-1, 1], [-1, -1], [1, -1]].forEach(([sx, sy], corner) => {
@@ -667,6 +740,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
           if (row && y * row > boundary) y = row * boundary;
         }
         positions.push(x, y, z); uvs.push(x / .9 + .5 + shift[0], y / .9 + .5 + shift[1]);
+        if (film) chipUvs.push(...(shapedFilm ? filmChipUv(ring, corner * (steps + 1) + contourIndex) : chipUv(x, y)));
         if (shaded) shades.push(shade * tint[0], shade * tint[1], shade * tint[2]);
       }
     });
@@ -678,15 +752,23 @@ function faceGeometry(model = "tiles", cell = 4, variant = null) {
     }
   }
   const center = positions.length / 3;
-  positions.push(0, 0, model === "stickers" ? .0024 : COATED(model) ? COATING_CENTER : SCULPTED(model) ? .020 : .090); uvs.push(.5 + shift[0], .5 + shift[1]); if (shaded) shades.push(tint[0], tint[1], tint[2]);
+  positions.push(0, 0, film ? shapedFilm ? .023 : .0024 : COATED(model) ? COATING_CENTER : SCULPTED(model) ? .020 : .090); uvs.push(.5 + shift[0], .5 + shift[1]); if (film) chipUvs.push(...chipUv(0, 0)); if (shaded) shades.push(tint[0], tint[1], tint[2]);
   const last = (profiles.length - 1) * count;
   for (let i = 0; i < count; i++) indices.push(last + i, last + (i + 1) % count, center);
   const geometry = new T.BufferGeometry();
   geometry.setAttribute("position", new T.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new T.Float32BufferAttribute(uvs, 2));
+  if (film) geometry.setAttribute("uv1", new T.Float32BufferAttribute(chipUvs, 2));
   if (shaded) geometry.setAttribute("color", new T.Float32BufferAttribute(shades, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
+  // The shared miter can collapse a few shoulder triangles at outer corners.
+  // Their unused vertices still need a valid normal for every surface finish.
+  const computedNormals = geometry.getAttribute("normal");
+  for (let i = 0; i < computedNormals.count; i++) {
+    if (Math.hypot(computedNormals.getX(i), computedNormals.getY(i), computedNormals.getZ(i)) < 1e-6)
+      computedNormals.setXYZ(i, 0, 0, 1);
+  }
   if (COATED(model)) {
     // Differentiate the surface along its rings, avoiding triangle-area bias
     // where the rounded shoulders join the broad, almost-flat crown.
@@ -726,7 +808,7 @@ export class RealisticCube {
     const settings = this.settings = QUALITY[this.quality];
     const calibratedLight = tuningFor(model, this.environment) ?? tuningFor("tiles", this.environment);
     this.tuning = { ...calibratedLight };
-    const baseLight = withWearMaterial(this.tuning, this.wear);
+    const baseLight = withWearMaterial(this.tuning, this.wear, model);
     // An entry that states its own scale is known before the HDR arrives, so
     // its materials are built with the final value and never touched again. An
     // entry that is measured starts at the reference reading and is corrected
@@ -782,7 +864,8 @@ export class RealisticCube {
       this.setupLight();
       this.grain = sharedMap("grain", plasticGrain);
       // UV adds a curved clear surface over the same stickerless cap outlines.
-      const speedcube = SCULPTED(model), coated = COATED(model), stickers = model === "stickers";
+      const speedcube = SCULPTED(model), coated = COATED(model), stickers = STICKERED(model);
+      const finish = SURFACES[MODELS[model]?.surface] ?? SURFACES.tiles;
       this.coating = coated ? sharedMap("coating", () => coatingNormal()) : null;
       // Recessed internals: one moulded plastic for every model, in the colour
       // the user picked. Injection-moulded ABS, not a painted part, so it keeps
@@ -805,12 +888,16 @@ export class RealisticCube {
       this.scratches = this.wear ? sharedMap("wear-normal", scratchNormalMap) : null;
       this.scratchRoughness = this.wear ? sharedMap("wear-roughness", scratchRoughnessMap) : null;
       this.scratchClearcoat = this.wear && coated ? sharedMap("wear-uv-normal", scratchClearcoatNormalMap) : null;
+      this.stickerDamage = this.wear && stickers ? sharedMap(STICKER_WEAR_MAP_KEY, stickerDamageMap) : null;
       if (this.scratches) this.scratches.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.scratchRoughness) this.scratchRoughness.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.scratchClearcoat) this.scratchClearcoat.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.stickerDamage) this.stickerDamage.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       // At detail quality every cap gets its own geometry: the same moulded
       // shape, but its own texture offset and tint, so 54 caps stop being copies.
-      const cells = speedcube ? 9 : 1;
+      // Stickers use the same molded outline for every cell, but wear needs to
+      // know which one is the center so its atlas tile can stay bite-free.
+      const cells = speedcube || (stickers && this.wear) ? 9 : 1;
       // How many distinct cap buffers exist. Detail quality gives all 54 their
       // own; below it, nine — one per position on a face — rather than one.
       //
@@ -821,11 +908,22 @@ export class RealisticCube {
       // that matters, because the comparison the eye actually makes is between
       // neighbours on one face, and with nine no two caps on a face repeat.
       // The sculpted models already paid for nine to get their moulded cells.
-      const spread = settings.detail ? 54 : 9;
+      const spread = settings.detail || (stickers && this.wear) ? 54 : 9;
       const variants = settings.detail
         ? capVariants()
-        : capVariants().slice(0, spread).map(v => ({ shift: v.shift }));
-      const faceGeometries = Array.from({ length: spread }, (_, i) => this.geometry(faceGeometry(model, i % cells, variants[i])));
+        : capVariants().slice(0, spread).map(v => ({ shift: v.shift, chip: v.chip }));
+      // The exposed ABS rim is a separate material and mesh from the vinyl.
+      // Its outline, mitered sidewalls and circular center transition are the
+      // original Speedcube mould. Children inherit the sticker's complete pose.
+      const holderGeometries = SEPARATE_HOLDERS(model)
+        ? Array.from({ length: 9 }, (_, cell) => this.geometry(faceGeometry("speedcube", cell))) : null;
+      this.holderMaterial = holderGeometries ? this.material(new T.MeshPhysicalMaterial({
+        color: core.color, roughness: .23, metalness: 0, ior: 1.49,
+        clearcoat: .42, clearcoatRoughness: .12, envMapIntensity: core.env,
+        bumpMap: this.grain, bumpScale: .0003, vertexColors: true,
+      })) : null;
+      this.holders = [];
+      const faceGeometries = Array.from({ length: spread }, (_, i) => this.geometry(faceGeometry(model, variants[i].cell ?? i % cells, variants[i])));
       // A UV finish is a layered surface, not a shinier plastic: the coloured
       // plastic keeps its own diffuse look under a separate, near-mirror clear
       // layer, and everything that reads as "coated" happens in that layer —
@@ -835,7 +933,7 @@ export class RealisticCube {
       // Strength and roughness come from the rig like every other model's; only
       // the maps are the coat's own. Spreading a second clearcoat literal here
       // is what let the table's gloss entry for this model sit inert.
-      const worn = this.wear ? (WEAR[model] ?? WEAR.tiles) : null;
+      const worn = this.wear ? finish.wear : null;
       const floor = this.wear ? WEAR_ROUGHNESS_FLOOR : 1;
       const coat = coated ? {
         clearcoatRoughness: L.glossRough / floor,
@@ -856,9 +954,12 @@ export class RealisticCube {
       // Pristine cubes keep the tiny procedural grain of a factory-new finish.
       const surface = this.scratches
         ? { normalMap: this.scratches, normalScale: new T.Vector2(worn.normal, worn.normal) }
-        : { bumpMap: this.grain, bumpScale: coated ? .00012 : speedcube ? .00035 : .00065 };
-      const baseRoughness = coated ? .17 : speedcube ? .30 : stickers ? .32 : .235;
-      this.faceMaterials = Object.fromEntries(["U", "R", "F", "D", "L", "B"].map(f => [f, this.material(new T.MeshPhysicalMaterial({ color: 0xffffff, roughness: baseRoughness / floor, roughnessMap: this.scratchRoughness, metalness: 0, clearcoat: L.gloss, ior: coated ? 1.52 : 1.46, envMapIntensity: L.env, vertexColors: speedcube || settings.detail, ...gloss, ...surface, ...coat }))]));
+        : { bumpMap: this.grain, bumpScale: finish.bump };
+      const damage = this.stickerDamage
+        ? { alphaMap: this.stickerDamage, alphaTest: .5, alphaToCoverage: true }
+        : {};
+      const baseRoughness = finish.roughness;
+      this.faceMaterials = Object.fromEntries(["U", "R", "F", "D", "L", "B"].map(f => [f, this.material(new T.MeshPhysicalMaterial({ color: 0xffffff, roughness: baseRoughness / floor, roughnessMap: this.scratchRoughness, metalness: 0, clearcoat: L.gloss, ior: finish.ior, envMapIntensity: L.env, vertexColors: (speedcube && !stickers) || settings.detail, ...gloss, ...surface, ...coat, ...damage }))]));
       if (this.scratches) {
         const settle = loaded => {
           if (this.disposed) return;
@@ -866,7 +967,7 @@ export class RealisticCube {
           if (!loaded) for (const material of Object.values(this.faceMaterials)) {
             material.normalMap = null;
             material.bumpMap = this.grain;
-            material.bumpScale = coated ? .00012 : speedcube ? .00035 : .00065;
+            material.bumpScale = finish.bump;
             material.needsUpdate = true;
           }
           this.render();
@@ -917,6 +1018,24 @@ export class RealisticCube {
           this.scratchClearcoat.userData.listeners.push(settle);
         }
       }
+      if (this.stickerDamage) {
+        const settle = loaded => {
+          if (this.disposed) return;
+          this.canvas.dataset.wearSticker = loaded ? "loaded" : "unavailable";
+          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
+            material.alphaMap = null;
+            material.alphaTest = 0;
+            material.needsUpdate = true;
+          }
+          this.render();
+        };
+        if (this.stickerDamage.userData.loaded) settle(true);
+        else if (this.stickerDamage.userData.failed) settle(false);
+        else {
+          this.canvas.dataset.wearSticker = "loading";
+          this.stickerDamage.userData.listeners.push(settle);
+        }
+      }
       if (coated) for (const material of Object.values(this.faceMaterials)) this.coatingLighting(material);
       this.faces = Array.from({ length: 54 }, (_, i) => {
         // `i` walks the 54 caps face by face, so `i % 9` hands each position on
@@ -924,6 +1043,12 @@ export class RealisticCube {
         // share one. For the sculpted models this is the same index as before,
         // since their nine buffers were already the nine moulded cells.
         const mesh = new T.Mesh(faceGeometries[settings.detail ? i : i % spread], this.faceMaterials.U);
+        if (holderGeometries) {
+          const holder = new T.Mesh(holderGeometries[i % 9], this.holderMaterial);
+          holder.castShadow = holder.receiveShadow = true;
+          mesh.add(holder);
+          this.holders.push(holder);
+        }
         mesh.castShadow = mesh.receiveShadow = true;
         this.root.add(mesh);
         return mesh;
@@ -971,9 +1096,10 @@ export class RealisticCube {
     // The emblem is printed on the plastic and the coat goes over it, so it
     // must not read as a matte decal on a glossy face.
     const coated = COATED(this.model);
-    this.markMaterial = this.material(new T.MeshPhysicalMaterial({ color: 0xffffff, map: this.markTexture, transparent: true, alphaTest: .15, roughness: coated ? .22 : .48, ...(coated ? { clearcoat: 1, clearcoatRoughness: .04, clearcoatNormalMap: this.coating, clearcoatNormalScale: new T.Vector2(.5, .5) } : {}), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    this.markMaterial = this.material(new T.MeshPhysicalMaterial({ color: this.model === "og" ? 0x0d73b8 : 0x2474ef, map: this.markTexture, transparent: true, alphaTest: .15, roughness: coated ? .22 : .48, ...(coated ? { clearcoat: 1, clearcoatRoughness: .04, clearcoatNormalMap: this.coating, clearcoatNormalScale: new T.Vector2(.5, .5) } : {}), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
     if (coated) { this.markMaterial.envMapIntensity = this.light.env; this.coatingLighting(this.markMaterial); }
-    this.mark = new T.Mesh(this.geometry(new T.PlaneGeometry(.72, .72)), this.markMaterial);
+    const markSize = .78;
+    this.mark = new T.Mesh(this.geometry(new T.PlaneGeometry(markSize, markSize)), this.markMaterial);
     this.root.add(this.mark);
   }
   setupJitter(offset = .009, tilt = .6) {
@@ -1677,12 +1803,13 @@ export class RealisticCube {
   }
   setPalette(colors) {
     for (const [f, color] of Object.entries(colors)) this.faceMaterials[f].color.set(color);
+    if (this.markMaterial && this.model !== "og" && colors.B) this.markMaterial.color.set(colors.B);
     this.render();
   }
   setTuning(values) {
     if (this.disposed || !values) return;
     this.tuning = { ...this.tuning, ...values };
-    const next = withWearMaterial(this.tuning, this.wear);
+    const next = withWearMaterial(this.tuning, this.wear, this.model);
     this.light = next;
     this.baseEnv = this.tuning.env;
     this.renderer.toneMappingExposure = next.exposure;
@@ -1751,7 +1878,11 @@ export class RealisticCube {
         seam.quaternion.copy(mesh.quaternion);
       }
       if (st.id === "U4" && this.mark) {
-        this.mark.position.copy(mesh.position).addScaledVector(vector(n), COATED(this.model) ? COATING_CENTER + .0008 : .0208);
+        // Use the cap's actual normal, including piece tilt, so the printed mark
+        // remains attached to the film throughout a turn.
+        const markNormal = SEPARATE_HOLDERS(this.model) ? new T.Vector3(0, 0, 1).applyQuaternion(mesh.quaternion) : vector(n);
+        const markHeight = SEPARATE_HOLDERS(this.model) ? .0238 : COATED(this.model) ? COATING_CENTER + .0008 : .0208;
+        this.mark.position.copy(mesh.position).addScaledVector(markNormal, markHeight);
         this.mark.quaternion.copy(mesh.quaternion);
       }
     });
@@ -1822,22 +1953,26 @@ export class RealisticCube {
   }
   frameBudget(width, height) {
     const speedcube = SCULPTED(this.model);
+    const fitPixels = (ratio, pixels) => Math.min(ratio, Math.sqrt(pixels / Math.max(1, width * height)));
     let ratio = this.restPixelRatio,
       samples = this.settings.camera ? 8 : this.settings.post ? 4 : 0,
       shadowSize = this.settings.camera ? 2048 : speedcube ? 1024 : 512,
       shadowSamples = this.settings.camera ? 20 : 12;
 
     if (this.interactionActive) {
-      ratio = Math.min(this.restPixelRatio, 1);
+      ratio = this.settings.camera
+        ? fitPixels(Math.min(this.restPixelRatio, 1), CINEMATIC_BUDGET.maxInteractionPixels)
+        : Math.min(this.restPixelRatio, 1);
       samples = this.target ? 1 : 0;
       shadowSize = 512;
       shadowSamples = 6;
     } else if (this.settings.camera && this.animationActive) {
-      ratio = Math.min(this.restPixelRatio, 1.5);
+      ratio = fitPixels(Math.min(this.restPixelRatio, 1.5), CINEMATIC_BUDGET.maxAnimationPixels);
       samples = 4;
       shadowSize = 1024;
       shadowSamples = 12;
     } else if (this.settings.camera) {
+      ratio = fitPixels(ratio, CINEMATIC_BUDGET.maxStillPixels);
       const bufferPixels = width * height * ratio * ratio;
       const bufferEdge = Math.min(width, height) * ratio;
       samples = bufferPixels <= CINEMATIC_BUDGET.maxEightSamplePixels ? 8 : 4;
@@ -1929,7 +2064,11 @@ export class RealisticCube {
     this.postMaterial.uniforms.projectionInverse.value.copy(this.camera.projectionMatrixInverse);
     this.renderer.setRenderTarget(this.target);
     this.renderer.render(this.scene, this.camera);
-    if (this.bloomA && !this.interactionActive) this.renderHalation();
+    // Halation is screen-space and must follow the current projection. Reusing
+    // the previous bloom buffer while orbiting leaves highlights pinned to the
+    // glass instead of the cube. The paired half-resolution kernel is cheap
+    // enough to update during the reduced-quality interaction path.
+    if (this.bloomA) this.renderHalation();
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.postScene, this.postCamera);
   }

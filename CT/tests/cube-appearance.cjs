@@ -5,7 +5,7 @@ const http = require('node:http');
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.CT_PLAYWRIGHT || 'C:/Users/alejo/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const root = path.resolve(__dirname, '..');
-const output = path.join(__dirname, 'screenshots');
+const output = process.env.CT_SCREENSHOT_DIR || path.join(__dirname, 'screenshots');
 const library = { version: 1, revision: 0, categories: [{ id: 'appearance-test', name: 'Practice', solves: Array.from({ length: 12 }, (_, i) => ({ id: `s-${i}`, rawMs: 10000 + i * 230, penalty: '', scramble: "R U R' U' F2 D L2 B", date: new Date(2026, 8, 1, 12, i).toISOString(), note: '' })) }] };
 const server = http.createServer((req, res) => {
   if (req.url === '/api/library') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(library)); return; }
@@ -78,9 +78,25 @@ const server = http.createServer((req, res) => {
       await close();
     }
     await page.setViewportSize({ width: 1440, height: 900 });
+    assert.equal(await page.locator('#cube-mount .cube-stage').count(), 1);
     await page.locator('#theme-btn').evaluate(el => el.click());
+    assert.equal(await page.locator('#dialog[open].appearance-dialog').count(), 1, 'Appearance opens before cube work begins');
+    assert.equal(await page.locator('#appearance-cube.cube-loading').count(), 1, 'The dialog owns a stable cube placeholder');
+    assert.equal(await page.locator('#cube-mount .cube-stage.cube-death').count(), 1, 'The background cube animates out');
+    await page.waitForFunction(() => !document.querySelector('#cube-mount .cube-stage'));
+    const workspaceGutters = await page.locator('.cube-workspace').evaluate(el => {
+      const frame = el.querySelector('.cube-carousel-frame').getBoundingClientRect();
+      const controls = el.querySelector('.cube-controls').getBoundingClientRect();
+      const outerDivider = el.closest('.appearance-layout').querySelector('.appearance-divider').getBoundingClientRect();
+      return { before: frame.left - outerDivider.right, after: controls.left - frame.right, frame: frame.width, controls: controls.width };
+    });
+    assert.ok(Math.abs(workspaceGutters.before - workspaceGutters.after) <= 2, 'The cube is packed between equal divider gutters');
+    assert.ok(workspaceGutters.frame <= 361 && workspaceGutters.controls > workspaceGutters.frame, 'Recovered workspace width belongs to cube settings');
     assert.equal(await page.locator('[data-cube-palette]').count(), 2);
-    assert.equal(await page.locator('[data-cube-dot]').count(), 5);
+    assert.equal(await page.locator('[data-cube-cross]').count(), 6);
+    assert.equal(await page.locator('[data-cube-palette="classic"] strong').textContent(), 'Washed');
+    assert.equal(await page.locator('.appearance-dialog small').count(), 0, 'Appearance controls do not carry descriptive subtitles');
+    assert.equal(await page.locator('[data-cube-dot]').count(), 6);
     assert.ok(await page.locator('#dialog').evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'The dialog itself does not scroll');
     assert.ok(await page.locator('.appearance-scroll').evaluate(el => getComputedStyle(el).overflowY === 'auto'), 'The settings pane is the scrolling one');
     assert.ok(await page.locator('.appearance-cube-pane').evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'The cube pane fits above the dialog footer');
@@ -88,14 +104,33 @@ const server = http.createServer((req, res) => {
       const button = el.getBoundingClientRect(), dialog = el.closest('dialog').getBoundingClientRect();
       return button.top >= dialog.top && button.bottom <= dialog.bottom;
     }), 'The Done button remains fully inside the Appearance dialog');
+    const crossCentre = page.locator('#appearance-cube .sticker').nth(4);
+    const crossBefore = await crossCentre.evaluate(el => el.style.transform);
+    await page.locator('[data-cube-cross="U"]').click();
+    await page.waitForTimeout(120);
+    const crossMid = await crossCentre.evaluate(el => el.style.transform);
+    assert.notEqual(crossMid, crossBefore, 'Changing cross animates the cube rotation');
+    await page.waitForTimeout(360);
+    await page.locator('#appearance-cube .cube-stage').press('Enter');
+    assert.equal(await page.locator('#appearance-cube .net-face[title="D face"] span').nth(4).evaluate(el => el.style.backgroundColor), 'rgb(244, 242, 233)', 'The preferred white cross is displayed on the down face');
+    assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem('cubetracker.preferences.v2')))).cubeCross, 'U');
+    await page.locator('#appearance-cube .cube-stage').press('Enter');
+    await close();
+    await page.locator('#cube-mount .cube-stage').waitFor();
+    await page.locator('#cube-mount .cube-stage').press('Enter');
+    assert.equal(await page.locator('#cube-mount .net-face[title="D face"] span').nth(4).evaluate(el => el.style.backgroundColor), 'rgb(239, 202, 87)', 'The live timer keeps yellow down regardless of the preferred cross');
+    await page.locator('#cube-mount .cube-stage').press('Enter');
+    await page.locator('#theme-btn').evaluate(el => el.click());
+    await page.waitForFunction(() => !document.querySelector('#cube-mount .cube-stage'));
+    await page.locator('[data-cube-cross="D"]').click();
     const paletteImages = {};
     for (const palette of ['classic', 'vivid']) {
       await page.locator('[data-cube-palette="' + palette + '"]').click();
-      for (const name of ['standard', 'tiles', 'stickers', 'speedcube', 'uv']) {
+      for (const name of ['standard', 'tiles', 'stickers', 'speedcube', 'uv', 'og']) {
         await selectModel(name);
         if (name !== 'standard') await page.locator('#appearance-cube canvas[data-model="' + name + '"]').waitFor();
         else await page.waitForFunction(() => !document.querySelector('#appearance-cube canvas'));
-        if (name === 'speedcube' || name === 'uv') await page.locator('#appearance-cube canvas[data-logo="loaded"]').waitFor();
+        if (name === 'speedcube' || name === 'uv' || name === 'og') await page.locator('#appearance-cube canvas[data-logo="loaded"]').waitFor();
         await page.waitForTimeout(250);
         const shot = await page.locator('#appearance-cube').screenshot({ path: path.join(output, 'cube-' + name + '-' + palette + '.png') });
         if (palette === 'classic') paletteImages[name] = shot;
@@ -111,8 +146,9 @@ const server = http.createServer((req, res) => {
     assert.equal(await model(), 'standard', 'The carousel wraps past the last cube');
     await page.locator('[data-cube-step="-1"]').click();
     await page.waitForTimeout(240);
-    assert.equal(await model(), 'uv', 'And wraps back');
-    await page.locator('#appearance-cube canvas[data-model="uv"]').waitFor();
+    assert.equal(await model(), 'og', 'And wraps back');
+    await page.locator('#appearance-cube canvas[data-model="og"]').waitFor();
+    await page.waitForTimeout(360);
     await page.screenshot({ path: path.join(output, 'appearance-carousel.png') });
     // The bare and coated cubes share every line of geometry, so the pair is
     // rendered together: the only thing that may differ between them is surface.
@@ -149,10 +185,12 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#appearance-cube .net-face span').count(), 54);
     assert.equal(await page.locator('#appearance-cube canvas').isVisible(), false);
     await page.locator('[data-cube-palette="classic"]').click();
-    assert.equal(await page.locator('#appearance-cube .net-face span').first().evaluate(el => el.style.backgroundColor), 'rgb(100, 155, 214)');
+    assert.equal(await page.locator('#appearance-cube .net-face span').first().evaluate(el => el.style.backgroundColor), 'rgb(244, 242, 233)');
     await stage.press('Enter');
     await page.locator('#appearance-cube .cube-realistic').waitFor();
     await close();
+    await page.locator('#cube-mount .cube-stage').waitFor();
+    assert.equal(await page.locator('#cube-mount .cube-stage.cube-materialize').count(), 1, 'The background cube animates back in');
     assert.equal(await page.locator('#appearance-cube canvas').count(), 0);
     await page.reload();
     await page.locator('#cube-mount .cube-realistic').waitFor();
@@ -172,7 +210,7 @@ const server = http.createServer((req, res) => {
     const restored = await page.locator('#drawer-cube').screenshot();
     assert.ok(restored.equals(solved), 'Forward/backward restores exactly the same rendered state');
     await close();
-    for (const name of ['stickers', 'speedcube']) {
+    for (const name of ['stickers', 'speedcube', 'og']) {
       await page.locator('#theme-btn').evaluate(el => el.click());
       await selectModel(name);
       await page.locator('#appearance-cube canvas[data-model="' + name + '"]').waitFor();
@@ -209,6 +247,8 @@ const server = http.createServer((req, res) => {
     assert.ok(menuBox.y >= dialogBox.y - 1 && menuBox.y + menuBox.height <= dialogBox.y + dialogBox.height + 1, 'The quality menu stays inside the dialog');
     await page.screenshot({ path: path.join(output, 'appearance-quality-menu.png') });
     await page.locator('[data-cube-quality="high"]').click();
+    // Surface wear is independent of quality; opt into it explicitly.
+    await page.locator('[data-control="cube-wear"]').check();
     await page.locator('#appearance-cube canvas[data-wear="loaded"]').waitFor({ timeout: 20000 });
     await page.waitForTimeout(220);
     assert.equal(await qualityMenu.isVisible(), false);
@@ -217,7 +257,9 @@ const server = http.createServer((req, res) => {
     await qualityTrigger.click();
     await page.locator('[data-cube-quality="balanced"]').click();
     await page.waitForTimeout(300);
-    assert.equal(await page.locator('#appearance-cube canvas[data-wear]').count(), 0, 'Balanced does not upload the 2k wear map');
+    await page.locator('#appearance-cube canvas[data-wear="loaded"]').waitFor();
+    await page.locator('[data-control="cube-wear"]').uncheck();
+    await page.waitForFunction(() => !document.querySelector('#appearance-cube canvas[data-wear]'));
     for (const width of [800, 390]) {
       await page.setViewportSize({ width, height: 844 });
       const framed = await page.locator('.cube-carousel-frame').evaluate(el => { const a = el.getBoundingClientRect(), b = el.closest('.dialog-body').getBoundingClientRect(); return a.left >= b.left - 1 && a.right <= b.right + 1 && a.width > 140; });

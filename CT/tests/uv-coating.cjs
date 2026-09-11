@@ -51,7 +51,7 @@ const server = http.createServer((req, res) => {
         const geometries = [...new Set(cube.faces.map(face => face.geometry))];
         return geometries.map(geometry => {
           const positions = geometry.getAttribute('position'), normals = geometry.getAttribute('normal');
-          let peak = -Infinity, innerShoulder = -Infinity, centerError = 0, normalError = 0;
+          let peak = -Infinity, innerShoulder = -Infinity, centerError = 0, normalError = 0, angularShear = null;
           for (let i = 0; i < positions.count; i++) {
             const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
             peak = Math.max(peak, z);
@@ -60,13 +60,29 @@ const server = http.createServer((req, res) => {
             if (Math.hypot(x, y) < .2) centerError = Math.max(centerError, Math.abs(z - .0195));
             normalError = Math.max(normalError, Math.abs(Math.hypot(normals.getX(i), normals.getY(i), normals.getZ(i)) - 1));
           }
-          return { peak, innerShoulder, centerError, normalError };
+          // The UV center has twelve 100-vertex rings plus one center vertex.
+          // Every index must stay on one polar ray as the footprint changes
+          // from rounded octagon to circle; an angular drift is a visible twist.
+          if (positions.count === 1201) {
+            angularShear = 0;
+            for (let i = 0; i < 100; i++) {
+              const baseAngle = Math.atan2(positions.getY(i), positions.getX(i));
+              for (let ring = 1; ring < 12; ring++) {
+                const index = ring * 100 + i;
+                const angle = Math.atan2(positions.getY(index), positions.getX(index));
+                angularShear = Math.max(angularShear, Math.abs(Math.atan2(Math.sin(angle - baseAngle), Math.cos(angle - baseAngle))));
+              }
+            }
+          }
+          return { peak, innerShoulder, centerError, normalError, angularShear };
         });
       });
       assert.ok(surface.every(cap => cap.peak > .022 && cap.peak < .027), 'Ridge stays shallow');
       assert.ok(surface.every(cap => cap.innerShoulder > .0215), 'Shoulder extends into the pool instead of forming a narrow rim');
       assert.ok(surface.every(cap => cap.centerError < .0001), 'Center stays flat');
       assert.ok(surface.every(cap => Number.isFinite(cap.normalError) && cap.normalError < .001), 'Surface normals remain finite and normalized');
+      const centers = surface.filter(cap => cap.angularShear !== null);
+      assert.ok(centers.length > 0 && centers.every(cap => cap.angularShear < 1e-5), 'Center rings stay radially aligned without a twist');
     }
     for (const [name, pitch, yaw, moves] of [
       ['studio', -25, -42, "x'"],

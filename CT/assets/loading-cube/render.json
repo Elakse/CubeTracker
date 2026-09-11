@@ -1,0 +1,8 @@
+{
+  "scramble": "B2 U2 B2 R2 D B2 L2 B D R2 F D' B' R2 L' D2 B2 R' F R'",
+  "moves": "(R U R' U')6",
+  "frames": 288,
+  "frameSize": 128,
+  "columns": 16,
+  "camera": "orthographic, F face, front view"
+}

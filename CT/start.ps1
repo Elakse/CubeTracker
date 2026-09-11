@@ -4,7 +4,7 @@ $cubeReady = $false
 $cubeResponse = $null
 try {
     $cubeResponse = Invoke-RestMethod -Uri 'http://127.0.0.1:4173/api/library' -TimeoutSec 2
-    $cubeReady = $cubeResponse.version -eq 1 -and $cubeResponse.capabilities.video -eq 1 -and $cubeResponse.capabilities.environments -eq 2 -and $cubeResponse.capabilities.surfaces -eq 2 -and $cubeResponse.capabilities.environmentTuning -eq 1
+    $cubeReady = $cubeResponse.version -eq 1 -and $cubeResponse.capabilities.video -eq 1 -and $cubeResponse.capabilities.environments -eq 2 -and $cubeResponse.capabilities.surfaces -eq 2 -and $cubeResponse.capabilities.environmentTuning -eq 2
 } catch {}
 if (-not $cubeReady -and $cubeResponse.version -eq 1) {
     # The page can update while a previous Node process keeps the old server
@@ -29,7 +29,7 @@ if (-not $cubeReady) {
     Start-Process -FilePath 'node' -ArgumentList ('"' + (Join-Path $cubeRoot 'server.mjs') + '"') -WorkingDirectory $cubeRoot -WindowStyle Hidden
     for ($cubeAttempt = 0; $cubeAttempt -lt 30; $cubeAttempt++) {
         Start-Sleep -Milliseconds 200
-        try { $cubeResponse = Invoke-RestMethod -Uri 'http://127.0.0.1:4173/api/library' -TimeoutSec 1; $cubeReady = $cubeResponse.version -eq 1 -and $cubeResponse.capabilities.video -eq 1 -and $cubeResponse.capabilities.environments -eq 2 -and $cubeResponse.capabilities.surfaces -eq 2 -and $cubeResponse.capabilities.environmentTuning -eq 1; if ($cubeReady) { break } } catch {}
+        try { $cubeResponse = Invoke-RestMethod -Uri 'http://127.0.0.1:4173/api/library' -TimeoutSec 1; $cubeReady = $cubeResponse.version -eq 1 -and $cubeResponse.capabilities.video -eq 1 -and $cubeResponse.capabilities.environments -eq 2 -and $cubeResponse.capabilities.surfaces -eq 2 -and $cubeResponse.capabilities.environmentTuning -eq 2; if ($cubeReady) { break } } catch {}
     }
 }
 if ($cubeReady) { Start-Process 'http://127.0.0.1:4173' } else { Write-Error 'CubeTracker could not start. Run node server.mjs in this folder to see details.' }

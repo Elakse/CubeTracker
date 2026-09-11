@@ -331,6 +331,146 @@
       dnf: solves.length - vals.length,
     };
   }
+  // Whole-cube rotations are convenient to write but inconvenient to reason
+  // about: an algorithm that opens with y ends with the cube facing elsewhere,
+  // so inverting it produces a scramble in a rotated frame. Rewriting the
+  // sequence without rotations keeps every derived scramble in the standard
+  // orientation while the algorithm itself is still shown exactly as written.
+  const ROTATION_FACE = { x: "R", y: "U", z: "F" };
+  const SLICE_FACE = { M: "L", E: "D", S: "F" };
+  // Which slice a rotated slice axis becomes, and whether its direction flips:
+  // M runs along L, so the same slice seen from R is M'.
+  const SLICE_AS = {
+    L: ["M", false], R: ["M", true],
+    D: ["E", false], U: ["E", true],
+    F: ["S", false], B: ["S", true],
+  };
+  const sameVector = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+  const faceAt = (v) => Object.keys(FACES).find((f) => sameVector(FACES[f].n, v));
+  const modifierOf = (token) =>
+    token.includes("2") ? "2" : token.includes("'") ? "'" : "";
+  const flipModifier = (m) => (m === "2" ? "2" : m === "'" ? "" : "'");
+  function normalize(alg) {
+    // Columns hold the images of the canonical axes. A rotation left-multiplies
+    // them; every other move is re-expressed in the frame accumulated so far,
+    // which for a sequence applied left to right is the transposed basis.
+    let basis = [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ];
+    const unrotate = (v) => basis.map((column) => dot(column, v));
+    const out = [];
+    for (const token of tokens(alg)) {
+      const key = token.replace(/[2']/g, ""),
+        mod = modifierOf(token);
+      if (ROTATION_FACE[key]) {
+        const { axis, angle } = moveSpec(token);
+        basis = basis.map((column) =>
+          rotate(column, axis, angle).map(Math.round),
+        );
+        continue;
+      }
+      if (SLICE_FACE[key]) {
+        const [name, flip] =
+          SLICE_AS[faceAt(unrotate(FACES[SLICE_FACE[key]].n))];
+        out.push(name + (flip ? flipModifier(mod) : mod));
+        continue;
+      }
+      const face = faceAt(unrotate(FACES[key[0].toUpperCase()].n));
+      const wide = /[a-z]/.test(key[0]) || key.endsWith("w");
+      out.push((wide ? face.toLowerCase() : face) + mod);
+    }
+    return out.join(" ");
+  }
+  // Merges turns of the same face that end up next to each other, so a scramble
+  // built from an inverse plus a random adjustment still reads like a scramble.
+  function collapse(alg) {
+    const quarters = (t) => (t.includes("2") ? 2 : t.includes("'") ? 3 : 1),
+      suffix = (n) => (n === 1 ? "" : n === 2 ? "2" : "'");
+    const out = [];
+    for (const token of tokens(alg)) {
+      const face = token.replace(/[2']/g, ""),
+        previous = out.at(-1);
+      if (previous && previous.replace(/[2']/g, "") === face) {
+        const total = (quarters(previous) + quarters(token)) % 4;
+        out.pop();
+        if (total) out.push(face + suffix(total));
+        continue;
+      }
+      out.push(token);
+    }
+    return out.join(" ");
+  }
+  // Wide and slice turns move centres, so a sequence whose wide turns do not
+  // cancel — R' d' F R2 u R' U R U' R u' R2, for one — finishes with the cube
+  // held differently even after its rotations are rewritten away. The 24 ways a
+  // cube can be held, each as the shortest sequence that gets there.
+  const centreKey = (cube) => {
+    const f = cube.facelets();
+    return Object.keys(FACES)
+      .map((face) => f[face][4])
+      .join("");
+  };
+  const ORIENTATIONS = (() => {
+    const map = new Map();
+    for (const tilt of ["", "x", "x2", "x'", "z", "z'"])
+      for (const spin of ["", "y", "y2", "y'"]) {
+        const seq = [tilt, spin].filter(Boolean).join(" ");
+        const key = centreKey(new Cube().apply(seq));
+        if (!map.has(key)) map.set(key, seq);
+      }
+    return map;
+  })();
+  // How the cube ends up being held after this sequence, as x/y/z turns.
+  const orientation = (alg) =>
+    ORIENTATIONS.get(centreKey(new Cube().apply(normalize(alg)))) ?? "";
+  // The scramble that turns a solved cube into the case this algorithm solves,
+  // always with white up and green front so every case is shown the same way.
+  const setup = (alg) =>
+    collapse([inverse(normalize(alg)), orientation(alg)].filter(Boolean).join(" "));
+  // The turn of the whole cube that has to precede the algorithm for it to
+  // solve that scramble. Empty for all but the sequences described above.
+  const hold = (alg) => inverse(orientation(alg));
+  // Two algorithms belong to the same case when their setups match.
+  const caseKey = (alg) => new Cube().apply(setup(alg)).signature();
+  const AUF = ["", "U", "U2", "U'"];
+  const HOLDS = ["", "y", "y2", "y'"];
+  // A cube whose six faces are each a single colour, wherever they point. The
+  // orientation is irrelevant: a solved cube held sideways is still solved, and
+  // algorithms written with rotations legitimately finish that way.
+  const isSolved = (cube) => {
+    const f = cube.facelets();
+    return Object.values(f).every((face) => face.every((c) => c === face[0]));
+  };
+  // Alternative algorithms for one case are routinely written from a different
+  // adjustment, or for the cube held a quarter turn round. Returns the prefix
+  // that makes this algorithm solve the given setup, or null when no way of
+  // holding the cube makes it solve that case at all.
+  function solvesCase(alg, setupAlg) {
+    const moves = [hold(alg), normalize(alg)].filter(Boolean).join(" ");
+    for (const hold of HOLDS)
+      for (const before of AUF)
+        for (const after of AUF) {
+          const prefix = [hold, before].filter(Boolean).join(" ");
+          if (
+            isSolved(
+              new Cube().apply(
+                [setupAlg, prefix, moves, after].filter(Boolean).join(" "),
+              ),
+            )
+          )
+            return prefix;
+        }
+    return null;
+  }
+  // A random U turn before and after the setup keeps the case identical while
+  // making the scramble different every time, so the case is recognised rather
+  // than remembered as a string.
+  function trainingScramble(alg, random = Math.random) {
+    const pick = () => AUF[Math.floor(random() * AUF.length)];
+    return collapse([pick(), setup(alg), pick()].filter(Boolean).join(" "));
+  }
   const api = {
     Cube,
     FACES,
@@ -338,6 +478,15 @@
     moveSpec,
     tokens,
     inverse,
+    normalize,
+    collapse,
+    setup,
+    hold,
+    orientation,
+    caseKey,
+    solvesCase,
+    isSolved,
+    trainingScramble,
     scramble,
     parseTime,
     parseCSV,

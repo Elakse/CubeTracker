@@ -19,7 +19,7 @@ const root = path.dirname(fileURLToPath(import.meta.url)),
   // gets retired. Bump a key here whenever the server gains something the page
   // cannot get from a stale process — `environments` is the asset allowlist
   // that carries the current reflection-photograph allowlist.
-  capabilities = { video: 1, environments: 2, surfaces: 2, environmentTuning: 1 };
+  capabilities = { video: 1, environments: 2, surfaces: 2, environmentTuning: 2 };
 let queue = Promise.resolve();
 const TUNING_LIMITS = {
   exposure: [.3, 1.6],
@@ -35,7 +35,8 @@ async function load() {
   try {
     return JSON.parse(await readFile(manifest, "utf8"));
   } catch (e) {
-    if (e.code === "ENOENT") return { version: 1, revision: 0, categories: [] };
+    if (e.code === "ENOENT")
+      return { version: 1, revision: 0, categories: [], algSets: null };
     throw e;
   }
 }
@@ -60,7 +61,7 @@ async function saveEnvironmentTuning(body) {
     model = String(body?.model || ""),
     values = body?.values;
   if (!/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(environment) ||
-      !["tiles", "stickers", "speedcube", "uv"].includes(model) ||
+      !["tiles", "stickers", "speedcube", "uv", "og"].includes(model) ||
       !values || typeof values !== "object" || Array.isArray(values))
     throw new Error("Invalid environment tuning.");
   const clean = {};
@@ -216,6 +217,73 @@ function serveVideo(req, res, video) {
     stream.pipe(res);
   }
 }
+// Trainer sets live only in the manifest: they are algorithms, not solves, so
+// nothing about them belongs in a category CSV. null means the app has never
+// initialised them and should offer the preloaded sets; [] means the user has
+// none and wants none.
+const text = (value, limit) =>
+  typeof value === "string" && value.trim() && value.length <= limit;
+function readAlgSets(value, fallback) {
+  if (value === undefined) return fallback ?? null;
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length > 100)
+    throw new Error("Invalid alg sets.");
+  return value.map((set) => {
+    if (
+      !text(set.id, 80) ||
+      !/^[\w-]{1,80}$/.test(set.id) ||
+      !text(set.name, 80) ||
+      !Array.isArray(set.groups) ||
+      set.groups.length > 100 ||
+      !Array.isArray(set.cases) ||
+      set.cases.length > 2000
+    )
+      throw new Error("Invalid alg set.");
+    return {
+      id: set.id,
+      name: set.name.trim(),
+      builtin: text(set.builtin, 40) ? set.builtin : null,
+      groups: set.groups.map((group) => {
+        if (!text(group.id, 80) || !text(group.name, 80))
+          throw new Error("Invalid alg group.");
+        return { id: group.id, name: group.name.trim() };
+      }),
+      cases: set.cases.map((entry) => {
+        if (
+          !text(entry.id, 80) ||
+          !text(entry.name, 60) ||
+          (entry.groupId != null && !text(entry.groupId, 80)) ||
+          !Array.isArray(entry.algs) ||
+          !entry.algs.length ||
+          entry.algs.length > 40
+        )
+          throw new Error("Invalid case.");
+        const stats = entry.stats || {};
+        for (const key of ["attempts", "best", "total", "last"])
+          if (stats[key] != null && !Number.isFinite(stats[key]))
+            throw new Error("Invalid case stats.");
+        return {
+          id: entry.id,
+          name: entry.name.trim(),
+          groupId: entry.groupId ?? null,
+          favoriteId: text(entry.favoriteId, 80) ? entry.favoriteId : null,
+          algs: entry.algs.map((alg) => {
+            if (!text(alg.id, 80) || !text(alg.moves, 600))
+              throw new Error("Invalid algorithm.");
+            return { id: alg.id, moves: alg.moves.trim() };
+          }),
+          stats: {
+            attempts: stats.attempts || 0,
+            best: stats.best ?? null,
+            total: stats.total || 0,
+            last: stats.last ?? null,
+            lastDate: text(stats.lastDate, 40) ? stats.lastDate : null,
+          },
+        };
+      }),
+    };
+  });
+}
 async function save(body) {
   const previous = await load();
   if (body.revision !== previous.revision)
@@ -227,6 +295,7 @@ async function save(body) {
     );
   if (!Array.isArray(body.categories) || body.categories.length > 200)
     throw new Error("Invalid categories.");
+  const algSets = readAlgSets(body.algSets, previous.algSets);
   const ids = new Set(),
     categories = [];
   for (const c of body.categories) {
@@ -302,7 +371,12 @@ async function save(body) {
       await atomic(file, csv);
     }
   }
-  const result = { version: 1, revision: previous.revision + 1, categories };
+  const result = {
+    version: 1,
+    revision: previous.revision + 1,
+    categories,
+    algSets,
+  };
   await atomic(manifest, JSON.stringify(result));
   return result;
 }
@@ -417,6 +491,7 @@ const server = http.createServer(async (req, res) => {
         "/CTU.html",
         "/assets/core.js",
         "/assets/timer-effects.js",
+        "/assets/trainer.js",
         "/assets/app.js",
         "/assets/cube-realistic.js",
         "/assets/environments.js",
@@ -425,6 +500,8 @@ const server = http.createServer(async (req, res) => {
         "/assets/plastic_0010_2k_9akcRm/plastic_0010_roughness_2k.jpg",
         "/assets/plastic_0010_2k_9akcRm/plastic_0010_color_2k.jpg",
         "/assets/style.css",
+        "/assets/loading-cube/animation.css",
+        "/assets/loading-cube/frames.png",
         "/assets/scramble-worker.js",
         "/assets/vendor/cube.js",
         "/assets/vendor/solve.js",

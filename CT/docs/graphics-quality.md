@@ -1,5 +1,33 @@
 # Graphics quality
 
+## OG Speedcube
+
+`og` is the third speedcube in Appearance, after Speedcube and UV Speedcube.
+`MODELS` separates shape, surface and base lighting; `SURFACES` owns roughness,
+grain, IOR and wear. OG combines the existing Speedcube moulds with the vinyl
+finish, sharing state, animation, palette, quality, environments and pooling.
+
+Each face has an exposed ABS holder under a separate .0024-unit vinyl film.
+Nine shared holder geometries reuse the mitered skirts, rounded shoulders and
+center transition. Glossy ABS (.23 roughness, .42 clearcoat) provides narrow rim
+highlights; inset vinyl has softer reflections. Holders follow the selected
+core color. Edge stickers curve inward, corners stay squarer, and six circular
+centers carry the existing GAN mark on white. Holders are children of the film
+meshes, inheriting the same tilt, scramble orientation and partial turn.
+
+The existing damage atlas wraps onto these outlines using perimeter UVs;
+scratch UVs retain physical coordinates. Missing vinyl exposes the holder.
+OG uses the vinyl base rig and saves overrides under its own `og` key.
+The launcher requires environment-tuning capability 2 so an older server is
+replaced before it can reject OG lighting saves.
+
+`node tests/og-speedcube.cjs` checks five qualities, circular centers, normals,
+film clearance, holder reuse, turns, scrambling, three core colors, all 54 wear
+identities, photographic light, resizing and disposal. The appearance test
+covers the six-model carousel, both palettes, saved OG selection, playback and
+independent wear controls. Validation uses automated Chrome renders plus visual
+inspection of the saved screenshots.
+
 The 3D cube's realism work, and the **Appearance → Graphics quality** setting
 that carries the expensive half of it.
 
@@ -94,9 +122,37 @@ about keeping that in the test suite.
 
 ## Surface wear and High detail
 
-Optional, independent of quality, behind `pref.cubeWear`. Three baked maps in
+Optional, independent of quality, behind `pref.cubeWear`. Four baked maps in
 `assets/wear/`, produced by `tools/bake-wear-textures.py` and loaded only when
-wear is on.
+wear is on. The fourth is an 8×8 sticker-damage atlas: on the Stickers model its
+alpha cutout removes the thin face mesh and reveals the modeled body below.
+
+Sticker wear uses 54 deterministic, edge-connected outlines at every quality.
+Each 256px atlas tile has a transparent gutter; alpha-to-coverage smooths the
+cutout in multisampled renders. Surviving vinyl retains 85% of its calibrated
+clearcoat and the existing shallow scratch normals (.42).
+
+The reference-driven bake uses one or two dominant torn strips, unequal short
+shoulders, and correlated coarse/medium/fine contour variation. Damage favours
+internal seams, with occasional outer-edge wear; corners usually wear on both
+internal seams. Overlapping tears merge by maximum depth instead of adding.
+Centers have lower severity. Intact edges receive no mandatory recession, and
+there is no global smooth-min or propagation of depth onto neighbouring sides.
+Those operations previously rounded the damage and removed film even from
+nominally clean edges. Across 54 masks, mean missing area relative to the clean
+rounded-square footprint is now 4.43% (range 0.48–15.83%); centers average 1.30%.
+The previous atlas averaged 14.56%. These are mask measurements, not estimates
+of missing material in the reference photograph.
+
+The bake uses upward local Y and writes image rows downward. UV1 inverts the
+atlas row while keeping local Y positive; scratch UVs remain independent.
+Both the shared texture key and PNG URL are versioned to prevent stale masks.
+Rebuild with `python tools/bake-wear-textures.py --stickers-only`; validate the
+bake with `python tests/sticker-wear.py`. The regression checks determinism,
+intact interiors, connected exterior damage, gutters, and area bounds.
+Chrome render checks cover all 54 atlas identities and local UV orientations,
+solved and scrambled views, and the 360px dialog. The existing High-quality
+exposure test still passes with +0.87% sticker luminance drift.
 
 It shipped invisible, and the reasons are worth keeping because none of them
 were the one everybody guessed. Measured on the shipped maps:
@@ -172,10 +228,6 @@ moulded cells.
 
 ### Open on wear
 
-- **The exposure check is one bake behind.** `tests/wear-exposure.cjs` last ran
-  green at 2.00% worst drift — wear *lifts* a cap rather than darkening it,
-  against 8–12% of headroom — but that was measured before the final clustering
-  floor changed the density. Re-run it.
 - Nothing here has been seen on a real GPU. Every image behind these numbers is
   a headless SwiftShader render, so the anisotropic filtering a real driver
   applies to these maps is untested, and the fine family is exactly the content
@@ -183,15 +235,17 @@ moulded cells.
 - `close` views measure lower than `dialog` ones on every model now, which is
   the clustering working as intended — but it means a close-up can land on a cap
   that happens to be one of the clean ones.
-- Wear concentrated at cap edges and corners is still not possible: one tile is
-  one cap and the per-cap shift *rolls* that tile, so a cap-aligned mask lands
-  somewhere different on every cap. It needs a second UV set.
+- Scratch wear concentrated at cap edges is still not possible: one tile is one
+  cap and the per-cap shift *rolls* that tile. Sticker damage is the deliberate
+  exception; it uses an unshifted second UV set so every cutout stays attached
+  to the sticker perimeter while the scratch map continues to vary.
 
-**Corner wear was tried and removed.** A term peaking at the corner arcs and
+**Geometry-side corner shading was tried and removed.** A term peaking at the corner arcs and
 falling to zero between them interpolates across these coarse rings as a
 four-pointed star on every cap. Carrying an angular signal per vertex needs
-finer tessellation than the caps have. Doing it per-pixel in texture space has
-no such problem and hits a different wall instead — the last bullet above.
+finer tessellation than the caps have. The sticker cutout now does this
+per-pixel through its dedicated UV set instead; it changes visibility rather
+than trying to fake missing material with vertex colour.
 
 **High and above still add the geometry-side detail** independently of the wear
 choice: per-cap moulding tint baked into the same vertex-colour attribute the
@@ -307,10 +361,14 @@ The aperture gather runs only where the circle of confusion exceeds a quarter
 buffer pixel. Transparent and effectively sharp pixels use the centre sample,
 and transparent pixels skip the 20-sample occlusion kernel while still retaining
 halation. During layer motion the lens renders at up to 1.5x density, 4x MSAA and
-a 1024 shadow. A completed still returns to 2x density and 8x MSAA while the
-target stays under two million pixels, then uses 4x; compact stills use a 1024
-shadow and larger ones 2048. Motion hides the temporary reduction while the
-final photograph remains visually unchanged.
+a 1024 shadow, bounded to two million pixels. Live Cube Studio interaction is
+bounded to 900,000 pixels, 1x MSAA and a 512 shadow because that canvas can cover
+most of a large monitor; halation is still regenerated every frame so highlights
+remain attached to the cube. A completed still spends up to four million pixels
+and returns to 8x MSAA below two million pixels, then uses 4x; compact stills use
+a 1024 shadow and larger ones 2048. Normal timer previews remain below these pixel
+ceilings and therefore keep their previous resolution. Motion hides the temporary
+reduction while the final photograph remains sharp.
 
 Lateral aberration is reduced to `.0015` and restricted to fully covered pixels;
 it fades with defocus. The cinematic composite now uses premultiplied-alpha

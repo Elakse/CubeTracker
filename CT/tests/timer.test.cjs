@@ -217,6 +217,9 @@ test("touch stop consumes its release and the next hold starts normally", () => 
   assert.equal(h.solves().length, 1);
   assert.equal(h.timer.blockedRelease, false);
   down();
+  assert.equal(h.timer.phase, "stopped");
+  h.advance(1000);
+  down();
   h.advance(350);
   up();
   assert.equal(h.timer.phase, "running");
@@ -241,8 +244,31 @@ test("inspection that runs past 17 seconds saves a DNF and is ready again", () =
   assert.equal(h.saved(), 1);
   h.releaseHold();
   assert.equal(h.solves().length, 1);
+  h.advance(1000);
   h.beginHold();
   assert.equal(h.timer.phase, "inspection");
+});
+
+test("stopping a solve ignores an immediate second start", () => {
+  const h = harness();
+  h.beginHold();
+  h.advance(350);
+  h.releaseHold();
+  assert.equal(h.timer.phase, "running");
+  h.advance(1000);
+  h.finishSolve();
+  assert.equal(h.timer.phase, "stopped");
+
+  h.beginHold();
+  assert.equal(h.timer.phase, "stopped");
+  h.advance(999);
+  h.beginHold();
+  assert.equal(h.timer.phase, "stopped");
+  h.advance(1);
+  h.beginHold();
+  h.advance(350);
+  h.releaseHold();
+  assert.equal(h.timer.phase, "running");
 });
 
 test("a hold that outlives inspection cannot start a solve after the DNF", () => {
