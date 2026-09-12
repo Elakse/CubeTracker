@@ -383,6 +383,36 @@
     }
     return out.join(" ");
   }
+  // Wide and slice turns always reorient the cube: Rw is the opposite outer
+  // face plus a whole-cube rotation, and M turns both outer layers of its axis
+  // around a rotated core. Each token below is that same turn written with the
+  // rotation made explicit, so replacing a token and letting normalize() fold
+  // the rotation back into the following moves leaves an equivalent sequence
+  // of outer face turns only.
+  const PLAIN_MOVES = {
+    M: "R L' x'",
+    E: "U D' y'",
+    S: "F' B z",
+    R: "L x",
+    L: "R x'",
+    U: "D y",
+    D: "U y'",
+    F: "B z",
+    B: "F z'",
+  };
+  const expand = (token) => {
+    const key = token.replace(/[2']/g, ""),
+      wide = /^(?:[URFDLB]w|[udfblr])$/.test(key),
+      slice = /^[MES]$/.test(key);
+    if (!wide && !slice) return token;
+    const base = PLAIN_MOVES[wide ? key[0].toUpperCase() : key],
+      doubled = token.includes("2") ? `${base} ${base}` : base;
+    return token.includes("'") ? inverse(doubled) : doubled;
+  };
+  // Rewrites any sequence a solver can be given as outer face turns only. A
+  // sequence whose own net rotation is not empty ends in a rotated frame, so
+  // this keeps the cube's relative state and drops only that whole-cube turn.
+  const plain = (alg) => normalize(tokens(alg).map(expand).join(" "));
   // Merges turns of the same face that end up next to each other, so a scramble
   // built from an inverse plus a random adjustment still reads like a scramble.
   function collapse(alg) {
@@ -426,9 +456,15 @@
   const orientation = (alg) =>
     ORIENTATIONS.get(centreKey(new Cube().apply(normalize(alg)))) ?? "";
   // The scramble that turns a solved cube into the case this algorithm solves,
-  // always with white up and green front so every case is shown the same way.
+  // always with white up and green front so every case is shown the same way,
+  // and always in outer face turns a solver can follow without turning the
+  // whole cube.
   const setup = (alg) =>
-    collapse([inverse(normalize(alg)), orientation(alg)].filter(Boolean).join(" "));
+    collapse(
+      plain(
+        [inverse(normalize(alg)), orientation(alg)].filter(Boolean).join(" "),
+      ),
+    );
   // The turn of the whole cube that has to precede the algorithm for it to
   // solve that scramble. Empty for all but the sequences described above.
   const hold = (alg) => inverse(orientation(alg));
@@ -466,10 +502,17 @@
   }
   // A random U turn before and after the setup keeps the case identical while
   // making the scramble different every time, so the case is recognised rather
-  // than remembered as a string.
+  // than remembered as a string. Viewing the whole scramble from another
+  // lateral side does the same again: the physical sequence is unchanged, only
+  // its notation is, and plain() folds the viewing rotation back out so the
+  // scramble never asks the solver to turn the whole cube.
+  const VIEWS = ["", "y", "y2", "y'"];
   function trainingScramble(alg, random = Math.random) {
     const pick = () => AUF[Math.floor(random() * AUF.length)];
-    return collapse([pick(), setup(alg), pick()].filter(Boolean).join(" "));
+    const view = VIEWS[Math.floor(random() * VIEWS.length)];
+    const base = [pick(), setup(alg), pick()].filter(Boolean).join(" ");
+    const viewed = view ? [view, base, inverse(view)].join(" ") : base;
+    return collapse(plain(viewed));
   }
   const api = {
     Cube,
@@ -479,6 +522,7 @@
     tokens,
     inverse,
     normalize,
+    plain,
     collapse,
     setup,
     hold,

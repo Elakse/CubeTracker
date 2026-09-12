@@ -24,6 +24,7 @@ const f2lIntact = (alg) => {
     ["F", "R", "B", "L"].every((k) => f[k].slice(3).every((x) => x === k))
   );
 };
+const plain = /^(?:[URFDLB](?:2|')?)(?: [URFDLB](?:2|')?)*$/;
 
 test("rotations are rewritten away without changing what the sequence does", () => {
   const samples = [
@@ -171,6 +172,45 @@ test("every OLL case produces a valid training scramble", () => {
     assert.notStrictEqual(C.solvesCase(alg, scramble), null, c.name);
     assert.ok(f2lIntact(scramble), `${c.name}: ${scramble} broke the first two layers`);
   }
+});
+
+test("scrambles are outer face turns only", () => {
+  const random = seeded(20260911);
+  for (const c of allCases)
+    for (const alg of c.algs) {
+      const setup = C.setup(alg),
+        scramble = C.trainingScramble(alg, random);
+      assert.match(setup, plain, `${c.name}: ${setup}`);
+      assert.match(scramble, plain, `${c.name}: ${scramble}`);
+    }
+});
+
+test("every wide and slice turn expands to outer face turns only", () => {
+  const check = (token) => {
+    const moves = C.plain(token);
+    assert.match(moves, plain, `${token} expands to ${moves}`);
+    // plain() drops the turn's whole-cube rotation, so orientation() puts the
+    // exact state back: the two sequences must match sticker for sticker.
+    assert.strictEqual(
+      new C.Cube()
+        .apply([moves, C.orientation(token)].filter(Boolean).join(" "))
+        .signature(),
+      new C.Cube().apply(token).signature(),
+      `${token} changed the cube`,
+    );
+  };
+  for (const face of ["R", "L", "U", "D", "F", "B"])
+    for (const token of [
+      `${face}w`,
+      `${face}w'`,
+      `${face}w2`,
+      face.toLowerCase(),
+      `${face.toLowerCase()}'`,
+      `${face.toLowerCase()}2`,
+    ])
+      check(token);
+  for (const slice of ["M", "E", "S"])
+    for (const token of [slice, `${slice}'`, `${slice}2`]) check(token);
 });
 
 test("a round covers what was asked of it", () => {
