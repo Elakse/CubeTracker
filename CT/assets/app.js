@@ -256,6 +256,7 @@
     appearanceScene = null,
     appearanceSuspendedMainCube = false,
     appearanceLoadToken = 0,
+    caseLoadToken = 0,
     appearanceSuspension = Promise.resolve(),
     lightingScene = null,
     lightingState = null,
@@ -2002,7 +2003,8 @@ ${rankCard(status)}
     };
   }
   function mountCaseCube(moves) {
-    const mount = $("#case-cube");
+    const token = ++caseLoadToken,
+      mount = $("#case-cube");
     if (!mount) return;
     let setup = "",
       hold = "";
@@ -2014,21 +2016,29 @@ ${rankCard(status)}
         '<div class="empty-state"><strong>Algorithm unavailable</strong></div>';
       return;
     }
-    // The scene opens on the case and steps forward through the algorithm, so
-    // the last move leaves a solved cube instead of a scrambled one.
-    drawerScene = new CubeScene(
-      mount,
-      [hold, moves].filter(Boolean).join(" "),
-      null,
-      {
-        setup: [CUBE_CROSSES[pref.cubeCross].rotation, setup].filter(Boolean).join(" "),
-        speed: pref.trainerSpeed,
-        fixedOrientation: true,
-      },
-    );
-    drawerScene.onChange = updateNotation;
-    if (pref.cubeMode === "net") drawerScene.setMode("net");
-    updateNotation();
+    beginCubeLoading(mount);
+    // Two frames guarantee that the modal and placeholder are visible before
+    // module work, geometry construction or shader compilation begins.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (token !== caseLoadToken || !mount.isConnected || !$("#dialog").open) return;
+        // The scene opens on the case and steps forward through the algorithm, so
+        // the last move leaves a solved cube instead of a scrambled one.
+        drawerScene = new CubeScene(
+          mount,
+          [hold, moves].filter(Boolean).join(" "),
+          null,
+          {
+            setup: [CUBE_CROSSES[pref.cubeCross].rotation, setup].filter(Boolean).join(" "),
+            speed: pref.trainerSpeed,
+            fixedOrientation: true,
+          },
+        );
+        drawerScene.onChange = updateNotation;
+        if (pref.cubeMode === "net") drawerScene.setMode("net");
+        updateNotation();
+      }, 0);
+    }));
   }
   function addAlgorithm(entry, moves) {
     const error = $("#alg-error");
@@ -2690,7 +2700,7 @@ ${rankCard(status)}
         }
         if (first && this.entrance) this.startEntrance();
       };
-      if (this.slot === "appearance-cube") endCubeLoading(this.mount, reveal);
+      if (this.slot === "appearance-cube" || this.slot === "case-cube") endCubeLoading(this.mount, reveal);
       else { endCubeLoading(this.mount); reveal(); }
     }
     replayMaterialize() {

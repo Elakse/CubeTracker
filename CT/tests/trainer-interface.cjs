@@ -170,7 +170,8 @@ const server = http.createServer((req, res) => {
       await page.keyboard.up('Space');
       await page.waitForTimeout(400);
       await page.keyboard.press('KeyX');
-      await page.waitForTimeout(400);
+      // Stops set a 1s restart cooldown, so the next hold has to wait it out.
+      await page.waitForTimeout(1200);
     }
     assert.equal(await page.locator('#dialog-title').textContent(), 'Round complete');
     assert.equal(await page.locator('.round-row').count(), 3, 'every attempt is listed');

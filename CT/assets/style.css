@@ -4896,6 +4896,16 @@ dialog.case-dialog {
 .case-visual .cube-stage {
   height: min(236px, 34dvh);
 }
+/* The mount is empty until the renderer is built, so it reserves the stage's
+   height for the throbber; the cube then waits out the throbber fade exactly
+   like the appearance carousel. */
+#case-cube.cube-loading {
+  height: min(236px, 34dvh);
+}
+#case-cube.cube-loading > .cube-stage {
+  visibility: hidden;
+  pointer-events: none;
+}
 .case-visual .scramble-tokens {
   margin: 12px -3px 4px;
   font-size: 11.5px;

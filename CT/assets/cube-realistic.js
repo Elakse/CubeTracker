@@ -569,6 +569,9 @@ function softboxMap(size = 128) {
 const VINYL_PROFILE = [[.399, .0618, 0], [.4009, .0627, .0036], [.399, .0618, .0072], [.38, .057, .0072], [.304, .057, .0072], [.114, .038, .0072]];
 const VINYL_ATLAS_PROFILE = [[.435, .065], [.437, .067], [.435, .066], [.40, .06], [.32, .06], [.12, .04]];
 const OG_VINYL_PROFILE = [[.400, .044, .0206], [.402, .046, .0242], [.400, .044, .0278], [.38, .05, .0278], [.30, .055, .0278], [.12, .04, .0278]];
+const SCULPTED_PROFILE = [[.48,.04,-.045], [.494,.043,-.021], [.497,.048,-.004], [.4875,.0499,.00151], [.4775,.052,.00634], [.4673,.054,.01047], [.4568,.0562,.01388], [.4461,.0583,.01655], [.4353,.0605,.01846], [.4243,.0628,.01962], [.4133,.065,.02], [.32,.07,.02], [.12,.05,.02]];
+const SCULPTED_CENTER_RINGS = [[.48,.04,-.045,1], [.494,.043,-.021,1], [.497,.052,-.004,1], [.4875,.0539,.00151,.975], [.4775,.056,.00634,.929], [.4673,.058,.01047,.88], [.4568,.0602,.01388,.83], [.4461,.0623,.01655,.779], [.4353,.0645,.01846,.731], [.4243,.0668,.01962,.687], [.4133,.065,.02,.643], [.365,.068,.02,.45], [.32,.07,.02,.2], [.285,.068,.02,0], [.195,.06,.02,0], [.12,.05,.02,0]];
+const UV_CENTER_RINGS = [[.480,.040,-.045,1], [.494,.043,-.021,1], [.497,.160,-.004,1], [.490,.170,.004,1], [.475,.210,.008,.95], [.465,.250,.013,.75], [.460,.300,.018,.45], [.445,.350,.024,0], [.365,.365,.0215,0], [.285,.285,.020,0], [.195,.195,COATING_CENTER,0], [.120,.120,COATING_CENTER,0]];
 
 function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKERED(model) ? "sticker" : "cap") {
   const film = layer === "sticker", shapedFilm = film && SCULPTED(model);
@@ -588,7 +591,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
       // crease and every cap wore an X in its reflection. A flat crown has one normal
       // and cannot. The fillet is a true circular arc, tangent to the crown, so its
       // slope grows from 0 to 32 degrees without the lip an ease-in-out leaves.
-      ? [[.48,.04,-.045], [.494,.043,-.021], [.497,.048,-.004], [.4875,.0499,.00151], [.4775,.052,.00634], [.4673,.054,.01047], [.4568,.0562,.01388], [.4461,.0583,.01655], [.4353,.0605,.01846], [.4243,.0628,.01962], [.4133,.065,.02], [.32,.07,.02], [.12,.05,.02]]
+      ? SCULPTED_PROFILE
       : [[.423, .092, 0], [.444, .108, .010], [.450, .116, .026], [.446, .122, .044], [.432, .127, .060], [.392, .134, .070], [.32, .12, .078], [.23, .09, .085], [.12, .05, .089]];
   const col = cell % 3 - 1, row = 1 - Math.floor(cell / 3);
   const positions = [], uvs = [], chipUvs = [], shades = [], indices = [], steps = 12;
@@ -640,63 +643,12 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
     // rounded octagonal square flowing into a circular inner cap. UV keeps
     // the longer, coated shoulder; the uncoated speedcube uses its original
     // shallower profile and center height.
-    const centerRings = shapedFilm ? profiles.map(([h, r, z]) => [h, r, z, 0]) : COATED(model) ? [
-      [.480, .040, -.045, 1], [.494, .043, -.021, 1], [.497, .160, -.004, 1],
-      [.490, .170, .004, 1], [.475, .210, .008, .95], [.465, .250, .013, .75],
-      [.460, .300, .018, .45], [.445, .350, .024, 0], [.365, .365, .0215, 0],
-      [.285, .285, .020, 0], [.195, .195, COATING_CENTER, 0],
-      [.120, .120, COATING_CENTER, 0],
-    ] : // Same vertical profile as every other cap, so the nine shapes match; the
-      // octagon-to-circle blend is the center's own footprint and stays.
-      [[.48,.04,-.045,1], [.494,.043,-.021,1], [.497,.052,-.004,1], [.4875,.0539,.00151,.975], [.4775,.056,.00634,.929], [.4673,.058,.01047,.88], [.4568,.0602,.01388,.83], [.4461,.0623,.01655,.779], [.4353,.0645,.01846,.731], [.4243,.0668,.01962,.687], [.4133,.065,.02,.643], [.365,.068,.02,.45], [.32,.07,.02,.2], [.285,.068,.02,0], [.195,.06,.02,0], [.12,.05,.02,0]];
-    const chamferedSquareContour = (h) => {
-      // A larger diagonal cut, followed by a small radius at every junction,
-      // keeps the octagonal outline legible without leaving a sharp polygon.
-      const cut = Math.min(h * .47, .22), round = Math.min(h * .12, .05);
-      const vertices = [[h, h - cut], [h - cut, h], [-h + cut, h], [-h, h - cut], [-h, -h + cut], [-h + cut, -h], [h - cut, -h], [h, -h + cut]];
-      const dense = [];
-      const unit = (x, y) => { const length = Math.hypot(x, y) || 1; return [x / length, y / length]; };
-      for (let i = 0; i < vertices.length; i++) {
-        const previous = vertices[(i + vertices.length - 1) % vertices.length], vertex = vertices[i], next = vertices[(i + 1) % vertices.length];
-        const inDir = unit(previous[0] - vertex[0], previous[1] - vertex[1]);
-        const outDir = unit(next[0] - vertex[0], next[1] - vertex[1]);
-        const start = [vertex[0] + inDir[0] * round, vertex[1] + inDir[1] * round];
-        const end = [vertex[0] + outDir[0] * round, vertex[1] + outDir[1] * round];
-        for (let s = 0; s < 5; s++) {
-          const t = s / 5, one = 1 - t;
-          dense.push([one * one * start[0] + 2 * one * t * vertex[0] + t * t * end[0], one * one * start[1] + 2 * one * t * vertex[1] + t * t * end[1]]);
-        }
-        const edgeEnd = [next[0] + unit(vertex[0] - next[0], vertex[1] - next[1])[0] * round, next[1] + unit(vertex[0] - next[0], vertex[1] - next[1])[1] * round];
-        for (let s = 0; s < 5; s++) {
-          const t = s / 5;
-          dense.push([end[0] + (edgeEnd[0] - end[0]) * t, end[1] + (edgeEnd[1] - end[1]) * t]);
-        }
-      }
-      // This contour is blended index-for-index with a circle below. Sampling
-      // it by perimeter length gives index zero a different polar angle from
-      // the circle's index zero, so intermediate rings shear around the center
-      // like a twist. Intersect each circle ray with the rounded polygon instead:
-      // both endpoints then share theta and their interpolation stays radial.
-      return Array.from({ length: count }, (_, i) => {
-        const theta = i / count * Math.PI * 2, dx = Math.cos(theta), dy = Math.sin(theta);
-        let radius = Infinity;
-        for (let segment = 0; segment < dense.length; segment++) {
-          const a = dense[segment], b = dense[(segment + 1) % dense.length];
-          const ex = b[0] - a[0], ey = b[1] - a[1], denominator = dx * ey - dy * ex;
-          if (Math.abs(denominator) < 1e-9) continue;
-          const rayDistance = (a[0] * ey - a[1] * ex) / denominator;
-          const edgeDistance = (a[0] * dy - a[1] * dx) / denominator;
-          if (rayDistance >= 0 && edgeDistance >= -1e-9 && edgeDistance <= 1 + 1e-9)
-            radius = Math.min(radius, rayDistance);
-        }
-        return Number.isFinite(radius) ? [dx * radius, dy * radius] : [dx * h, dy * h];
-      });
-    };
+    const centerRings = shapedFilm ? profiles.map(([h, r, z]) => [h, r, z, 0]) : COATED(model) ? UV_CENTER_RINGS : SCULPTED_CENTER_RINGS;
     const radialPositions = [], radialUvs = [], radialChipUvs = [], radialShades = [], radialIndices = [];
     for (const [ring, [h, r, z, squareMix]] of centerRings.entries()) {
       const t = Math.min(1, (z - lowest) / span), ramp = t * t * (3 - 2 * t);
       const shade = AO_FLOOR === undefined ? 1 : AO_FLOOR + (1 - AO_FLOOR) * ramp;
-      const squarePoints = chamferedSquareContour(h);
+      const squarePoints = chamferedSquareContour(h, count);
       for (let i = 0; i < count; i++) {
         const theta = i / count * Math.PI * 2;
         const circleX = Math.cos(theta) * h, circleY = Math.sin(theta) * h;
@@ -834,6 +786,243 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
   return geometry;
 }
 
+function chamferedSquareContour(h, count) {
+  // A larger diagonal cut, followed by a small radius at every junction,
+  // keeps the octagonal outline legible without leaving a sharp polygon.
+  const cut = Math.min(h * .47, .22), round = Math.min(h * .12, .05);
+  const vertices = [[h, h - cut], [h - cut, h], [-h + cut, h], [-h, h - cut], [-h, -h + cut], [-h + cut, -h], [h - cut, -h], [h, -h + cut]];
+  const dense = [];
+  const unit = (x, y) => { const length = Math.hypot(x, y) || 1; return [x / length, y / length]; };
+  for (let i = 0; i < vertices.length; i++) {
+    const previous = vertices[(i + vertices.length - 1) % vertices.length], vertex = vertices[i], next = vertices[(i + 1) % vertices.length];
+    const inDir = unit(previous[0] - vertex[0], previous[1] - vertex[1]);
+    const outDir = unit(next[0] - vertex[0], next[1] - vertex[1]);
+    const start = [vertex[0] + inDir[0] * round, vertex[1] + inDir[1] * round];
+    const end = [vertex[0] + outDir[0] * round, vertex[1] + outDir[1] * round];
+    for (let s = 0; s < 5; s++) {
+      const t = s / 5, one = 1 - t;
+      dense.push([one * one * start[0] + 2 * one * t * vertex[0] + t * t * end[0], one * one * start[1] + 2 * one * t * vertex[1] + t * t * end[1]]);
+    }
+    const edgeEnd = [next[0] + unit(vertex[0] - next[0], vertex[1] - next[1])[0] * round, next[1] + unit(vertex[0] - next[0], vertex[1] - next[1])[1] * round];
+    for (let s = 0; s < 5; s++) {
+      const t = s / 5;
+      dense.push([end[0] + (edgeEnd[0] - end[0]) * t, end[1] + (edgeEnd[1] - end[1]) * t]);
+    }
+  }
+  // This contour is blended index-for-index with a circle below. Sampling
+  // it by perimeter length gives index zero a different polar angle from
+  // the circle's index zero, so intermediate rings shear around the center
+  // like a twist. Intersect each circle ray with the rounded polygon instead:
+  // both endpoints then share theta and their interpolation stays radial.
+  return Array.from({ length: count }, (_, i) => {
+    const theta = i / count * Math.PI * 2, dx = Math.cos(theta), dy = Math.sin(theta);
+    let radius = Infinity;
+    for (let segment = 0; segment < dense.length; segment++) {
+      const a = dense[segment], b = dense[(segment + 1) % dense.length];
+      const ex = b[0] - a[0], ey = b[1] - a[1], denominator = dx * ey - dy * ex;
+      if (Math.abs(denominator) < 1e-9) continue;
+      const rayDistance = (a[0] * ey - a[1] * ex) / denominator;
+      const edgeDistance = (a[0] * dy - a[1] * dx) / denominator;
+      if (rayDistance >= 0 && edgeDistance >= -1e-9 && edgeDistance <= 1 + 1e-9)
+        radius = Math.min(radius, rayDistance);
+    }
+    return Number.isFinite(radius) ? [dx * radius, dy * radius] : [dx * h, dy * h];
+  });
+}
+
+const BODY = {
+  speedcube: { inset: .006 },
+  uv: { inset: .006 },
+  og: { inset: .006 },
+};
+const BODY_BASE = .487 - .045;
+const BODY_SAMPLES = 256;
+const BODY_FRAMES = [
+  { axis: 0, sign: 1, n: [1, 0, 0], right: [0, 0, -1], down: [0, -1, 0] },
+  { axis: 0, sign: -1, n: [-1, 0, 0], right: [0, 0, 1], down: [0, -1, 0] },
+  { axis: 1, sign: 1, n: [0, 1, 0], right: [1, 0, 0], down: [0, 0, 1] },
+  { axis: 1, sign: -1, n: [0, -1, 0], right: [1, 0, 0], down: [0, 0, -1] },
+  { axis: 2, sign: 1, n: [0, 0, 1], right: [1, 0, 0], down: [0, -1, 0] },
+  { axis: 2, sign: -1, n: [0, 0, -1], right: [-1, 0, 0], down: [0, -1, 0] },
+];
+
+function bodyRingPoints(cell, col, row, h, r, z, squareMix) {
+  const points = [];
+  if (cell === 4) {
+    const samples = 128;
+    const square = chamferedSquareContour(h, samples);
+    for (let i = 0; i < samples; i++) {
+      const angle = i / samples * Math.PI * 2;
+      const circleX = Math.cos(angle) * h, circleY = Math.sin(angle) * h;
+      points.push([circleX + (square[i][0] - circleX) * squareMix, circleY + (square[i][1] - circleY) * squareMix]);
+    }
+    return points;
+  }
+  const steps = 24, boundary = .487 + z - .001;
+  for (let corner = 0; corner < 4; corner++) {
+    const [sx, sy] = [[1, 1], [-1, 1], [-1, -1], [1, -1]][corner];
+    const inner = (!col || sx === -col) && (!row || sy === -row);
+    const radius = inner ? Math.min(h * .88, (col && row ? .065 : .31) * h / .497) : r;
+    const centerX = sx * (h - radius), centerY = sy * (h - radius);
+    for (let step = 0; step <= steps; step++) {
+      const angle = (corner + step / steps) * Math.PI / 2;
+      let x = centerX + radius * Math.cos(angle), y = centerY + radius * Math.sin(angle);
+      if (col && x * col > boundary) x = col * boundary;
+      if (row && y * row > boundary) y = row * boundary;
+      points.push([x, y]);
+    }
+  }
+  return points;
+}
+
+function bodyRingRadius(points, angle) {
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  let radius = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1], denominator = dx * ey - dy * ex;
+    if (Math.abs(denominator) < 1e-12) continue;
+    const along = (a[0] * ey - a[1] * ex) / denominator;
+    const edge = (a[0] * dy - a[1] * dx) / denominator;
+    if (along > 0 && edge >= -1e-9 && edge <= 1 + 1e-9) radius = Math.max(radius, along);
+  }
+  return radius;
+}
+
+function bodyRingTable(points) {
+  const table = new Float32Array(BODY_SAMPLES);
+  for (let i = 0; i < BODY_SAMPLES; i++) table[i] = bodyRingRadius(points, i / BODY_SAMPLES * Math.PI * 2);
+  return table;
+}
+
+function bodyRadiusAt(table, angle) {
+  let position = angle / (Math.PI * 2) * BODY_SAMPLES;
+  position = ((position % BODY_SAMPLES) + BODY_SAMPLES) % BODY_SAMPLES;
+  const index = Math.floor(position), fraction = position - index;
+  return table[index] * (1 - fraction) + table[(index + 1) % BODY_SAMPLES] * fraction;
+}
+
+const BODY_FOOTPRINTS = new Map();
+function bodyFootprint(model, cell, col, row) {
+  const key = `${model}|${cell}|${col}|${row}`;
+  const cached = BODY_FOOTPRINTS.get(key);
+  if (cached) return cached;
+  const [h, r, z, squareMix] = cell === 4
+    ? COATED(model) ? UV_CENTER_RINGS[0] : SCULPTED_CENTER_RINGS[0]
+    : SCULPTED_PROFILE[0];
+  const table = bodyRingTable(bodyRingPoints(cell, col, row, h, r, z, squareMix));
+  BODY_FOOTPRINTS.set(key, table);
+  return table;
+}
+
+function bodyFaces(model, p) {
+  const faces = [];
+  for (let axis = 0; axis < 3; axis++) {
+    if (!p[axis]) continue;
+    const frame = BODY_FRAMES.find(f => f.axis === axis && f.sign === Math.sign(p[axis]));
+    const col = p[0] * frame.right[0] + p[1] * frame.right[1] + p[2] * frame.right[2];
+    const rowIndex = p[0] * frame.down[0] + p[1] * frame.down[1] + p[2] * frame.down[2] + 1;
+    faces.push({
+      n: frame.n,
+      right: frame.right,
+      up: frame.down.map(value => -value),
+      footprint: bodyFootprint(model, rowIndex * 3 + col + 1, col, 1 - rowIndex),
+    });
+  }
+  return faces;
+}
+
+// Intersect the cap-footprint prisms into one closed shell. Clipping against
+// every contour (rather than overlapping independently capped extrusions) keeps
+// the corner/edge junctions clean, without internal faces or depth offsets.
+function pieceBodyGeometry(model, p, quality) {
+  const body = BODY[model] ?? BODY.speedcube;
+  const samples = quality === "low" ? 64 : quality === "balanced" ? 96 : 144;
+  const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  const unit = a => { const length = Math.hypot(...a); return a.map(v => v / length); };
+  const planes = [];
+  const addPlane = (n, d) => {
+    if (!planes.some(plane => dot(plane.n, n) > 1 - 1e-10 && Math.abs(plane.d - d) < 1e-8)) planes.push({ n, d });
+  };
+  // Flat hidden backs retain the straight, untapered moulded walls.
+  for (const frame of BODY_FRAMES) addPlane(frame.n, p[frame.axis] === frame.sign ? BODY_BASE : .458);
+  for (const face of bodyFaces(model, p)) {
+    const contour = Array.from({ length: samples }, (_, i) => {
+      const angle = i / samples * Math.PI * 2;
+      const radius = bodyRadiusAt(face.footprint, angle);
+      return [Math.cos(angle) * radius, Math.sin(angle) * radius];
+    });
+    for (let i = 0; i < samples; i++) {
+      const a = contour[i], b = contour[(i + 1) % samples];
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (length < 1e-9) continue;
+      const nx = (b[1] - a[1]) / length, ny = (a[0] - b[0]) / length;
+      addPlane(face.right.map((v, axis) => v * nx + face.up[axis] * ny), nx * a[0] + ny * a[1] - body.inset);
+    }
+  }
+  const positions = [], normals = [], uvs = [], indices = [];
+  for (const plane of planes) {
+    const n = plane.n;
+    const reference = Math.abs(n[2]) < .9 ? [0, 0, 1] : [0, 1, 0];
+    const u = unit(cross(reference, n)), v = cross(n, u);
+    let polygon = [[-2,-2],[2,-2],[2,2],[-2,2]].map(([x,y]) => n.map((value, axis) => value * plane.d + u[axis]*x + v[axis]*y));
+    for (const other of planes) {
+      if (other === plane) continue;
+      const clipped = [];
+      for (let i = 0; i < polygon.length; i++) {
+        const a = polygon[i], b = polygon[(i+1) % polygon.length];
+        const da = dot(other.n, a) - other.d, db = dot(other.n, b) - other.d;
+        if (da <= 1e-9) clipped.push(a);
+        if ((da < -1e-9 && db > 1e-9) || (da > 1e-9 && db < -1e-9)) {
+          const t = da / (da-db);
+          clipped.push(a.map((value, axis) => value + (b[axis]-value)*t));
+        }
+      }
+      polygon = clipped;
+      if (polygon.length < 3) break;
+    }
+    if (polygon.length < 3) continue;
+    const start = positions.length / 3;
+    // A genuine 2D surface parameterization: both wall direction and depth
+    // vary, so normal-map scratches never collapse into stretched streaks.
+    for (const point of polygon) {
+      positions.push(...point);
+      normals.push(...n);
+      uvs.push(dot(point, u)/.9 + .5, dot(point, v)/.9 + .5);
+    }
+    for (let i = 1; i < polygon.length-1; i++) {
+      const a = polygon[i].map((value, axis) => value-polygon[0][axis]);
+      const b = polygon[i+1].map((value, axis) => value-polygon[0][axis]);
+      if (Math.hypot(...cross(a,b)) > 1e-7) indices.push(start, start+i, start+i+1);
+    }
+  }
+  // Smooth only the shallow contour facets. The cap/side and intersecting
+  // prism boundaries retain their hard normals and their exact right angles.
+  const coincident = new Map();
+  for (let i = 0; i < positions.length; i += 3) {
+    const key = positions.slice(i, i+3).map(value => Math.round(value * 1e7)).join(",");
+    if (!coincident.has(key)) coincident.set(key, []);
+    coincident.get(key).push(i);
+  }
+  const flatNormals = normals.slice();
+  for (const vertices of coincident.values()) for (const i of vertices) {
+    const normal = flatNormals.slice(i, i+3), sum = [0,0,0];
+    for (const j of vertices) {
+      const adjacent = flatNormals.slice(j, j+3);
+      if (dot(normal, adjacent) > .97) for (let axis = 0; axis < 3; axis++) sum[axis] += adjacent[axis];
+    }
+    const smooth = unit(sum);
+    for (let axis = 0; axis < 3; axis++) normals[i+axis] = smooth[axis];
+  }
+  const geometry = new T.BufferGeometry();
+  geometry.setAttribute("position", new T.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new T.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("uv", new T.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
 export class RealisticCube {
   constructor(stage, onUnavailable, model = "tiles", quality = "balanced", environment = "studio", wear = false, core = "black", options = {}) {
     this.stage = stage;
@@ -937,11 +1126,12 @@ export class RealisticCube {
           ? { normalMap: this.scratches, normalScale: new T.Vector2(WEAR.speedcube.normal, WEAR.speedcube.normal) }
           : { bumpMap: this.grain, bumpScale: coated ? .0004 : .0008 }),
       }));
-      const body = this.geometry(new RoundedBoxGeometry(speedcube ? .91 : .972, speedcube ? .91 : .972, speedcube ? .91 : .972, 5, speedcube ? .15 : .085));
+      const body = speedcube ? null : this.geometry(new RoundedBoxGeometry(.972, .972, .972, 5, .085));
       this.bodies = [];
       for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
         if (!x && !y && !z) continue;
-        const mesh = new T.Mesh(body, shell);
+        const geometry = body ?? this.geometry(pieceBodyGeometry(model, [x, y, z], this.quality));
+        const mesh = new T.Mesh(geometry, shell);
         mesh.castShadow = mesh.receiveShadow = true;
         this.root.add(mesh);
         this.bodies.push({ mesh, p: [x, y, z] });
