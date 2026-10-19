@@ -24,6 +24,7 @@ Running this file rewrites only the generated files in assets/wear/.
 """
 
 from pathlib import Path
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -33,9 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "assets" / "wear"
 SIZE = 1024
 
-# Source art, read at bake time and never shipped: the runtime cost of the
-# fingerprints is zero because they end up inside the two maps that already
-# load. The sheet is a dense tiling of about fifty prints at roughly 130 texels
+# Source art is read only at bake time. The sheet is a dense tiling of about
+# fifty prints at roughly 130 texels
 # each, which is neither the size nor the density a cube has — a fingertip
 # covers a good part of a 19mm cap, and a cube has a few prints on it, not
 # fifty. So it is enlarged and stamped sparsely rather than used as it comes.
@@ -77,6 +77,35 @@ STICKER_SEVERITY_PROBABILITY = (.12, .23, .48, .17)
 STICKER_PATCH_WIDTH = (.24, .56)
 STICKER_PATCH_DEPTH = (.032, .085)
 STICKER_CENTER_SEVERITY = (.16, .32)
+
+# A tear removes pixels, not geometry. The moulded rim that gives an intact
+# sticker its thickness lives at the original outline, so a bite takes the rim
+# with it and leaves a vertical, one-texel cut -- a cut that has no width to
+# reflect anything, which is exactly why torn film reads as paint while the
+# untorn sides read as film. `sticker_edge_atlas()` puts that rim back as
+# shading, from the same distance field the mask is already clipped out of.
+#
+# R is contact occlusion at the cut; G and B are the lip's tangent-space normal
+# with Z reconstructed in the shader. Only an edge that actually retreated gets
+# a lip: an intact rim already has the real geometry, and shading a second one
+# on top of it would double the highlight the mould is there to make.
+STICKER_LIP_WIDTH = 3.5 / STICKER_DAMAGE_TILE
+# The vinyl is .0072 of a cap thick, about two texels of this atlas, and two
+# texels of slope do not survive the mip chain -- see the note at the top of
+# this file. So the lip is drawn three and a half texels wide at a stated angle
+# rather than at its true near-vertical one. It is the same trade the scratches
+# make, for the same reason, and at this scale the eye reads the highlight, not
+# the width.
+STICKER_LIP_ANGLE_DEG = 28.0
+STICKER_LIP_PERCENTILE = 99.5
+# How far an edge must have retreated before it counts as torn. Below a texel
+# the difference is antialiasing on the moulded outline, not a bite.
+STICKER_TEAR_GATE = (1.0 / STICKER_DAMAGE_TILE, 3.0 / STICKER_DAMAGE_TILE)
+# A dark line at the foot of the wall, straddling the cut so it survives
+# minification, and neutral on both sides of that band so the tile gutters stay
+# clean and no darkness bleeds between patterns.
+STICKER_CONTACT_WIDTH = 7.0 / STICKER_DAMAGE_TILE
+STICKER_CONTACT_DEPTH = .55
 
 
 def smoothstep(edge0, edge1, value):
@@ -132,7 +161,7 @@ def udn(base, detail):
     return normalize(combined)
 
 
-def normal_from_height(height):
+def normal_from_height(height, angle_deg=STEEPEST_FLANK_DEG, percentile=STEEPEST_PERCENTILE):
     """Central differences on a wrapping height field, scaled to a stated slope.
 
     Green is +dy, not -dy, and the sign is the whole difference between a cut
@@ -145,8 +174,8 @@ def normal_from_height(height):
     """
     dx = (np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)) * 0.5
     dy = (np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)) * 0.5
-    steepest = np.percentile(np.hypot(dx, dy), STEEPEST_PERCENTILE)
-    slope = np.tan(np.radians(STEEPEST_FLANK_DEG)) / max(steepest, 1e-9)
+    steepest = np.percentile(np.hypot(dx, dy), percentile)
+    slope = np.tan(np.radians(angle_deg)) / max(steepest, 1e-9)
     return normalize(np.dstack((-dx * slope, dy * slope, np.ones_like(height))))
 
 
@@ -189,7 +218,7 @@ def toksvig(normals, radius=3):
     return np.sqrt(np.sqrt(alpha * alpha + 2.0 * variance)) - CLEAN_ROUGHNESS
 
 
-def fingerprint_layer(rng):
+def fingerprint_layer(rng, centered=False):
     """One touch per tile, which is one touch per cap.
 
     A cap's UVs run u = x / .9 + .5, so it spans 1.10 of this texture: one tile
@@ -241,9 +270,14 @@ def fingerprint_layer(rng):
         # The window has already taken a third off the edges, so renormalise or
         # the print arrives at half the strength the coefficient below assumes.
         patch = patch / max(np.percentile(patch, 99.5), 1e-6)
-        ys = (np.arange(stamp) + rng.integers(0, SIZE))[:, None] % SIZE
-        xs = (np.arange(stamp) + rng.integers(0, SIZE))[None, :] % SIZE
-        layer[ys, xs] = np.maximum(layer[ys, xs], np.clip(patch, 0.0, 1.0))
+        if centered:
+            y = x = (SIZE - stamp) // 2
+            layer[y:y + stamp, x:x + stamp] = np.maximum(
+                layer[y:y + stamp, x:x + stamp], np.clip(patch, 0.0, 1.0))
+        else:
+            ys = (np.arange(stamp) + rng.integers(0, SIZE))[:, None] % SIZE
+            xs = (np.arange(stamp) + rng.integers(0, SIZE))[None, :] % SIZE
+            layer[ys, xs] = np.maximum(layer[ys, xs], np.clip(patch, 0.0, 1.0))
     return layer
 
 
@@ -419,15 +453,20 @@ def scratch_field():
     return height, cut, scuff * cluster, fingerprint_layer(rng)
 
 
-def sticker_damage_atlas():
-    """Edge-connected tears in thin vinyl, in the sticker's physical frame.
+def sticker_damage_fields():
+    """Every tile's signed distance field, and the moulded outline it started from.
 
-    A few asymmetric strips expose the black backing. Short jagged breaks live
-    on those strips, not on the intact interior or uniformly around every edge.
+    Edge-connected tears in thin vinyl, in the sticker's physical frame. A few
+    asymmetric strips expose the black backing. Short jagged breaks live on
+    those strips, not on the intact interior or uniformly around every edge.
     PNG rows run down; local sticker Y runs up, as in faceGeometry().
+
+    Both the cutout mask and the edge map are clipped out of `distance`, and a
+    lip drawn against a contour the mask does not actually have is worse than
+    no lip at all. So they come from one walk of one seeded sequence instead of
+    two functions that would have to be kept in step by hand.
     """
     grid, tile = STICKER_DAMAGE_GRID, STICKER_DAMAGE_TILE
-    atlas = Image.new("L", (grid * tile, grid * tile), 0)
     axis = (np.arange(tile) + .5) / tile - .5
     x, image_y = np.meshgrid(axis, axis)
     y = -image_y
@@ -480,8 +519,54 @@ def sticker_damage_atlas():
             # A hard intersection retains the torn contour. The old smooth-min
             # rounded every junction and even eroded otherwise pristine corners.
             distance = np.minimum(distance, inward - retreat)
+        yield pattern, distance, pristine
+
+
+def sticker_damage_atlas():
+    """The cutout mask: one texel of antialiasing on the torn contour."""
+    grid, tile = STICKER_DAMAGE_GRID, STICKER_DAMAGE_TILE
+    atlas = Image.new("L", (grid * tile, grid * tile), 0)
+    for pattern, distance, _ in sticker_damage_fields():
         coverage = np.clip(distance * tile + .5, 0, 1)
         atlas.paste(Image.fromarray(np.rint(coverage * 255).astype(np.uint8)),
+                    ((pattern % grid) * tile, (pattern // grid) * tile))
+    return atlas
+
+
+def sticker_edge_atlas():
+    """The thickness the cutout throws away, drawn back as light.
+
+    Locked texel-for-texel to the mask above: same distance field, same tiles,
+    same UV footprint. R is contact occlusion, G and B the lip normal's XY.
+    Neutral is (255, 128, 128) -- open, and flat -- which is also what the
+    gutters and every untorn interior texel stay.
+    """
+    grid, tile = STICKER_DAMAGE_GRID, STICKER_DAMAGE_TILE
+    atlas = Image.new("RGB", (grid * tile, grid * tile), (255, 128, 128))
+    for pattern, distance, pristine in sticker_damage_fields():
+        # How far this stretch of edge retreated from the moulded outline. Zero
+        # along an intact side, which is what keeps the real rim's own geometry
+        # from being shaded a second time.
+        gate = smoothstep(*STICKER_TEAR_GATE, pristine - distance)
+        # Full film thickness a few texels in, falling to nothing at the cut:
+        # the same fall the mould makes at an intact rim, in the same direction.
+        lip = smoothstep(0.0, STICKER_LIP_WIDTH, distance)
+        # Normalised before the gate so every tile's lip is drawn at the same
+        # angle whether that tile has one deep tear or a dozen shallow nicks.
+        normals = normal_from_height(lip, STICKER_LIP_ANGLE_DEG, STICKER_LIP_PERCENTILE)
+        normals[:, :, :2] *= gate[:, :, None]
+        normals = normalize(normals)
+        # Rises to the cut from inside and falls away again just outside it, so
+        # the band is a line on the contour rather than a flood over everything
+        # the mask removed -- which is what a plain inside-only ramp would be
+        # once the mip chain pulled it inward.
+        crest = ((1 - smoothstep(0.0, STICKER_CONTACT_WIDTH, distance))
+                 * smoothstep(-STICKER_CONTACT_WIDTH * .6, 0.0, distance))
+        occlusion = 1.0 - STICKER_CONTACT_DEPTH * crest * gate
+        packed = np.dstack((occlusion,
+                            np.clip(normals[:, :, 0] * .5 + .5, 0, 1),
+                            np.clip(normals[:, :, 1] * .5 + .5, 0, 1)))
+        atlas.paste(Image.fromarray(np.rint(packed * 255).astype(np.uint8)),
                     ((pattern % grid) * tile, (pattern // grid) * tile))
     return atlas
 
@@ -511,6 +596,20 @@ def main():
     worn_roughness = np.clip(
         CLEAN_ROUGHNESS + mottle + cut * 0.30 + scuff * 0.07 + prints * 0.26 + toksvig(scratches),
         0.60, 1.0)
+    # Sticker scratches now come from supplied source art. Preserve only the
+    # handling response here so the previous scratch pattern is replaced rather
+    # than quietly layered beneath the new normal.
+    sticker_handling = np.clip(CLEAN_ROUGHNESS + mottle + scuff * 0.07, 0.60, 1.0)
+    Image.fromarray(np.rint(sticker_handling * 255.0).astype(np.uint8)).save(
+        OUTPUT / "worn-sticker-handling.png", optimize=True
+    )
+    # Lets sticker work be rebaked without rewriting the user's supplied normal
+    # or any of the established plastic-wear assets.
+    if "--sticker-roughness-only" in sys.argv:
+        for filename in ("worn-sticker-handling.png",):
+            path = OUTPUT / filename
+            print(f"{path.relative_to(ROOT)} ({path.stat().st_size:,} bytes)")
+        return
 
     encode_normal(plastic).save(OUTPUT / "worn-plastic-normal.png", optimize=True)
     encode_normal(uv_clearcoat).save(OUTPUT / "worn-uv-clearcoat-normal.png", optimize=True)
@@ -518,6 +617,7 @@ def main():
         OUTPUT / "worn-plastic-roughness.png", optimize=True
     )
     sticker_damage_atlas().save(OUTPUT / "worn-sticker-alpha.png", optimize=True)
+    sticker_edge_atlas().save(OUTPUT / "worn-sticker-edge.png", optimize=True)
 
     tilt = np.degrees(np.arctan2(np.hypot(plastic[:, :, 0], plastic[:, :, 1]), plastic[:, :, 2]))
     print("tilt deg: median {:.2f}  p90 {:.2f}  p99 {:.2f}  max {:.2f}".format(*np.percentile(tilt, [50, 90, 99]), tilt.max()))
@@ -530,7 +630,13 @@ def main():
 if __name__ == "__main__":
     import sys
     if "--stickers-only" in sys.argv:
+        # The mask and the edge map are one asset in two files: rebake both or
+        # neither, or the lip ends up drawn against a contour that moved.
         OUTPUT.mkdir(parents=True, exist_ok=True)
         sticker_damage_atlas().save(OUTPUT / "worn-sticker-alpha.png", optimize=True)
+        sticker_edge_atlas().save(OUTPUT / "worn-sticker-edge.png", optimize=True)
+        for filename in ("worn-sticker-alpha.png", "worn-sticker-edge.png"):
+            path = OUTPUT / filename
+            print(f"{path.relative_to(ROOT)} ({path.stat().st_size:,} bytes)")
     else:
         main()

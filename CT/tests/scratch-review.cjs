@@ -7,7 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { chromium } = require(process.env.CT_PLAYWRIGHT || 'C:/Users/alejo/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const root = path.resolve(__dirname, '..');
-const output = path.join(__dirname, 'screenshots');
+const output = process.env.SCRATCH_OUTPUT || path.join(__dirname, 'screenshots');
 const MODELS = (process.env.SCRATCH_MODELS || 'tiles,stickers,speedcube,uv').split(',');
 const QUALITY = process.env.SCRATCH_QUALITY || 'high';
 const DSF = Number(process.env.CT_DSF || 2);
@@ -60,14 +60,24 @@ const server = http.createServer((req, res) => {
         }, { model, quality: QUALITY, wear: !blocked });
         if (!blocked) {
           await page.locator('canvas[data-wear="loaded"]').waitFor({ timeout: 20000 });
-          if (model === 'stickers') await page.locator('canvas[data-wear-sticker="loaded"]').waitFor({ timeout: 20000 });
-          if (model === 'stickers') {
-            const outlines = await page.evaluate(() => new Set(cube.faces.map(face => {
-              const uv = face.geometry.getAttribute('uv1');
-              return `${Math.floor(uv.getX(uv.count - 1) * 8)},${Math.floor(uv.getY(uv.count - 1) * 8)}`;
-            })).size);
-            if (outlines !== 54) throw Error(`Expected 54 unique sticker outlines, got ${outlines}`);
+          if (model === 'stickers' || model === 'og') await page.locator('canvas[data-wear-sticker="loaded"][data-wear-sticker-normal="loaded"][data-wear-sticker-roughness="loaded"][data-wear-sticker-handling-normal="loaded"]').waitFor({ timeout: 20000 });
+          if (model === 'stickers' || model === 'og') {
+            const vinyl = await page.evaluate(() => ({
+              outlines: new Set(cube.faces.map(face => {
+                const uv = face.geometry.getAttribute('uv1');
+                return `${Math.floor(uv.getX(uv.count - 1) * 8)},${Math.floor(uv.getY(uv.count - 1) * 8)}`;
+              })).size,
+              scratched: cube.faces.filter(face => face.material.normalMap?.name === 'Worn sticker normal').length,
+              nails: cube.faces.filter(face => face.geometry.userData.stickerNail).length,
+              nailPlacements: new Set(cube.faces.filter(face => face.geometry.userData.stickerNail).map(face => face.geometry.userData.stickerNailPosition.join(','))).size,
+              handlingFilms: cube.faces.filter(face => face.material.clearcoatNormalMap?.name === 'Worn sticker handling normal').length,
+              handlingScale: cube.faceMaterials.U.clearcoatNormalScale.x,
+            }));
+            if (vinyl.outlines !== 54) throw Error(`Expected 54 unique sticker outlines, got ${vinyl.outlines}`);
+            if (vinyl.scratched !== 54 || vinyl.nails !== 9 || vinyl.nailPlacements !== 9 || vinyl.handlingFilms !== 54 || vinyl.handlingScale !== .1) throw Error(`Unexpected vinyl wear distribution: ${JSON.stringify(vinyl)}`);
           }
+        } else if (model === 'stickers' || model === 'og') {
+          await page.locator('canvas[data-sticker-clean-normal="loaded"]').waitFor({ timeout: 20000 });
         }
         if (model === 'speedcube' || model === 'uv') await page.locator('canvas[data-logo="loaded"]').waitFor({ timeout: 20000 });
         console.log(blocked ? 'clean' : 'wear', model, await page.evaluate(() => {

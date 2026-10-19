@@ -138,6 +138,52 @@ Each 256px atlas tile has a transparent gutter; alpha-to-coverage smooths the
 cutout in multisampled renders. Surviving vinyl retains 85% of its calibrated
 clearcoat and the existing shallow scratch normals (.42).
 
+On the OG model the same atlas is *wrapped* onto the film contour by
+`filmChipUv()` rather than looked up at the vertex's physical position, so tears
+stay on the real edge of its shaped and circular films. `VINYL_ATLAS_PROFILE`
+used to wrap them onto .435 -- the radius the bake draws its rounded square at
+-- which is the mask's fifty-percent contour, so the three rings carrying the
+film's .0072 of thickness landed exactly on `alphaTest` and read .24, .00 and
+.35. Every OG sticker had its moulded rim discarded, torn or not: a flat plate
+with stair-stepped corners, no tear involved. The contour is now inset three
+texels. Measured against the shipped atlas, two texels still fades the rim to
+.83 two mip levels down while three holds .97 there and .78 at mip 3, and each
+further texel costs visible damage -- 48 of 54 films keep a bite at three, 44 at
+four, 33 at the nine that would match the Stickers model's physical inset.
+
+The cutout removes pixels, not geometry, and that is what a torn edge used to
+look like. The moulded rim that gives a sticker its .0072 of thickness lives at
+the original outline, so a bite takes the rim with it and leaves a vertical,
+one-texel cut. At roughly 0.074mm per texel there is no width there to reflect
+anything, and torn film read as paint while the untouched sides of the same
+sticker read as film. `worn-sticker-edge.png` is that rim redrawn as shading: an
+RGB atlas baked from the same signed distance field the mask is clipped out of,
+so the two are locked texel-for-texel and neither is useful with a stale copy of
+the other — `--stickers-only` emits both. R carries contact occlusion at the
+cut; G and B carry the lip normal's XY, with Z reconstructed in the shader. It
+is bound as `aoMap`, which routes the occlusion through the stock path and
+leaves `tearRelief()` a uniform and a channel-1 varying it does not have to
+declare for itself.
+
+Three details there are load-bearing. The lip is drawn 3.5 texels wide at a
+stated 28 degrees rather than at the vinyl's true, near-vertical two, for the
+reason `tools/bake-wear-textures.py` opens with: two texels of slope do not
+survive the mip chain. It is raised in its own tangent frame, because `tbn` in
+`normal_fragment_begin` is built from whichever UV set the normal map uses —
+channel 2 for these stickers, which carries a per-cap quarter turn the
+channel-1 cutout does not, so reusing it lit a quarter of the cube's lips from
+the wrong side. And only edges that actually retreated get a lip: an intact rim
+already has real geometry, and shading a second one over it doubles the
+highlight the mould is there to make.
+
+The clear layer takes the same deviation as the base normal, which is most of
+the effect rather than a refinement. Vinyl is laminated, so the highlight that
+reads as thickness is a reflection in the laminate, not in the pigment beneath
+it; bending only the diffuse normal moved a shadow, left the lit side of the
+lip flat, and looked like a smudge instead of an edge. The tear itself survives
+the map failing to load — the material drops `aoMap` and renders the cutout
+exactly as it did before this existed.
+
 The reference-driven bake uses one or two dominant torn strips, unequal short
 shoulders, and correlated coarse/medium/fine contour variation. Damage favours
 internal seams, with occasional outer-edge wear; corners usually wear on both
@@ -206,7 +252,7 @@ against. The clustering field runs at frequency 2 — one tile being one cap, th
 gives a cap a worn side and a clean side rather than an even nine-patch — with a
 floor of 0.20, because 0.10 left some caps pristine at detail quality.
 
-### Per-model response, and the fingerprint
+### Per-model response and handling haze
 
 `WEAR` sits beside `RIGS` for the same reason: as per-model ternaries these
 drifted into one shared strength that suited none of the four. A scratch reads
@@ -215,13 +261,28 @@ glossy tiles let the roughness do the work, matte stickerless plastic has no
 specular to dull so the slope carries it (1.30, the highest), vinyl scuffs
 rather than gouges, and `uv` wears in the coat rather than under it.
 
-The fingerprint is baked in from `Fingerprints01_1K.png`, which is read at bake
-time and never shipped. One stamp, enlarged 3.4×: the sheet's own prints are an
-eighth of a cap and read as stipple at that scale, and since one tile is one cap
-anything baked here appears on every one of the 54. It is almost entirely a
-roughness event and almost no slope — the opposite weighting to a scratch —
-because a print is oil: ridges scatter, valleys do not, which is why it is
-invisible on matte plastic and obvious on a glossy cap held to a window.
+Sticker handling uses the supplied `worn-sticker-handling-normal.png` directly.
+Every physical film samples a different close crop and quarter-turn through its
+own UV channel. At 0.10 clearcoat-normal strength its overlapping fingerprints
+and fine scuffs disturb only the laminate reflection, merging into soft handling
+haze instead of reading as separately stamped, high-contrast prints.
+
+When Surface wear is off, the vinyl still uses the supplied
+`sticker-clean-normal.png` for the fine printed/laminated texture. It is mapped
+one full image per sticker through the ordinary UVs at 0.30 base-normal strength
+and 0.12 clearcoat-normal strength, so a factory-new sticker has visible but
+fine physical grain instead of a perfectly flat cap; the clean roughness
+remains unchanged.
+
+Stickered vinyl separates those channels. Its base handling roughness map keeps
+the mottle and broad scuff haze but omits the old cut and normal-derived scratch
+roughness. Every physical film uses the supplied scratch normal
+through a dedicated UV channel and a differently oriented scratch-only crop.
+Nine films instead take crops centered on the curved nail impressions. Each cut
+covers about one third of the source, with the nail feature deliberately offset
+toward different edges, corners and interior points. Wear stays continuous while
+the dents remain sparse and at a natural fingernail scale. The exposed ABS,
+holders and core still use the original plastic normal and roughness maps.
 
 ### Nine cap buffers below detail quality
 

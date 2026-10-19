@@ -4,7 +4,7 @@ const path = require('node:path');
 const http = require('node:http');
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.CT_PLAYWRIGHT || 'C:/Users/alejo/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
-const root = path.resolve(__dirname, '..'), output = path.join(__dirname, 'screenshots');
+const root = path.resolve(__dirname, '..'), output = process.env.OG_OUTPUT || path.join(__dirname, 'screenshots');
 const server = http.createServer((req, res) => {
   if (req.url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
   if (req.url === '/') {
@@ -39,7 +39,8 @@ const server = http.createServer((req, res) => {
         await cube.envReady;
       }, {quality, wear, core, environment});
       await page.locator('canvas[data-logo="loaded"]').waitFor();
-      if (wear) await page.locator('canvas[data-wear="loaded"][data-wear-roughness="loaded"][data-wear-sticker="loaded"]').waitFor();
+      if (wear) await page.locator('canvas[data-wear="loaded"][data-wear-roughness="loaded"][data-wear-sticker="loaded"][data-wear-sticker-normal="loaded"][data-wear-sticker-roughness="loaded"][data-wear-sticker-handling-normal="loaded"]').waitFor();
+      else await page.locator('canvas[data-sticker-clean-normal="loaded"]').waitFor();
     };
     for (const quality of ['low','balanced','high','ultra','cinematic']) {
       await create(quality);
@@ -84,7 +85,43 @@ const server = http.createServer((req, res) => {
       assert.ok(identity,'All 54 wear tiles stay within their assigned film');
       await page.screenshot({path:path.join(output,`og-worn-${core}.png`)});
     }
+    const wearMaterials = await page.evaluate(() => ({
+      scratchedFilms: cube.faces.filter(face => face.material.normalMap?.name === 'Worn sticker normal').length,
+      nailFilms: cube.faces.filter(face => face.geometry.userData.stickerNail).length,
+      nailPlacements: new Set(cube.faces.filter(face => face.geometry.userData.stickerNail).map(face => face.geometry.userData.stickerNailPosition.join(','))).size,
+      handlingFilms: cube.faces.filter(face => face.material.clearcoatNormalMap?.name === 'Worn sticker handling normal').length,
+      stickerNormal: cube.faceMaterials.U.normalMap?.name,
+      stickerNormalChannel: cube.faceMaterials.U.normalMap?.channel,
+      stickerRoughness: cube.faceMaterials.U.roughnessMap?.name,
+      stickerClearcoatRoughness: cube.faceMaterials.U.clearcoatRoughnessMap?.name,
+      handlingNormal: cube.faceMaterials.U.clearcoatNormalMap?.name,
+      handlingNormalChannel: cube.faceMaterials.U.clearcoatNormalMap?.channel,
+      handlingNormalScale: [cube.faceMaterials.U.clearcoatNormalScale.x, cube.faceMaterials.U.clearcoatNormalScale.y],
+      plasticNormal: cube.shellMaterial.normalMap?.name,
+      holderNormal: cube.holderMaterial.normalMap?.name,
+      normalUvInBounds: cube.faces.every(face => {
+        const normalUv = face.geometry.getAttribute('uv2'), handlingUv = face.geometry.getAttribute('uv3');
+        return [normalUv, handlingUv].every(uv => uv && Array.from({length:uv.count}, (_, i) => [uv.getX(i), uv.getY(i)]).flat().every(value => value >= 0 && value <= 1));
+      }),
+    }));
+    assert.deepEqual(wearMaterials, {
+      scratchedFilms:54, nailFilms:9, nailPlacements:9, handlingFilms:54,
+      stickerNormal:'Worn sticker normal', stickerNormalChannel:2,
+      stickerRoughness:'Worn sticker handling', stickerClearcoatRoughness:'Worn sticker handling',
+      handlingNormal:'Worn sticker handling normal',
+      handlingNormalChannel:3, handlingNormalScale:[.1,.1],
+      plasticNormal:'Worn plastic normal', holderNormal:'Worn plastic normal', normalUvInBounds:true,
+    });
     await create('balanced',false,'black','studioSmall08');
+    assert.deepEqual(await page.evaluate(() => ({
+      normal: cube.faceMaterials.U.normalMap?.name,
+      normalChannel: cube.faceMaterials.U.normalMap?.channel,
+      normalScale: [cube.faceMaterials.U.normalScale.x, cube.faceMaterials.U.normalScale.y],
+      coatNormal: cube.faceMaterials.U.clearcoatNormalMap?.name,
+      coatNormalScale: [cube.faceMaterials.U.clearcoatNormalScale.x, cube.faceMaterials.U.clearcoatNormalScale.y],
+      roughnessMap: cube.faceMaterials.U.roughnessMap,
+      clearcoatRoughnessMap: cube.faceMaterials.U.clearcoatRoughnessMap,
+    })), { normal:'Clean sticker normal', normalChannel:0, normalScale:[.3,.3], coatNormal:'Clean sticker normal', coatNormalScale:[.12,.12], roughnessMap:null, clearcoatRoughnessMap:null });
     await page.screenshot({path:path.join(output,'og-photographic.png')});
     await page.evaluate(()=> {
       Object.assign(document.querySelector('#stage').style,{width:'360px',height:'360px'});

@@ -32,6 +32,51 @@ const QUALITY = {
 // tuned against and only the cut rises above it. `CLEAN_ROUGHNESS` in
 // tools/bake-wear-textures.py is the same number; the two have to move together.
 const WEAR_ROUGHNESS_FLOOR = .72;
+// The supplied vinyl scan covers roughly a whole cube face, not one 19 mm
+// sticker. A worn film samples about a third of the source so the broad curved
+// impressions remain fingernail-sized instead of shrinking with the full sheet.
+const STICKER_NORMAL_UV_SCALE = .34;
+// Factory-new vinyl still has a fine printed/laminated grain. The supplied
+// clean normal is mapped one full sticker at a time at a restrained strength.
+const STICKER_CLEAN_NORMAL_SCALE = .30;
+const STICKER_CLEAN_CLEARCOAT_NORMAL_SCALE = .12;
+// The supplied handling scan is sampled more closely than the scratch sheet:
+// a fingerprint spans most of a real 19 mm sticker. Its clearcoat-only strength
+// stays low so the many overlapping touches read as haze, not stamped ridges.
+const STICKER_HANDLING_UV_SCALE = .22;
+const STICKER_HANDLING_NORMAL_SCALE = .10;
+// The cutout takes the moulded rim with it. `alphaMap` removes pixels, not
+// geometry, so where a tear eats into the perimeter the rolled edge that gives
+// a sticker its .0072 of thickness is discarded along with everything else and
+// what is left is a vertical, one-texel cut. A cut that thin has no width to
+// reflect anything, which is the whole reason torn film reads as paint while
+// the untorn sides of the same sticker read as film. The baked edge map is that
+// rim redrawn as shading, locked to the same contour and the same UV set as the
+// mask. Strength is 1: the slope is already stated in the bake, in degrees, and
+// a second multiplier here would only make the two disagree.
+const STICKER_EDGE_NORMAL_SCALE = 1;
+// The contact line the bake puts at the foot of the wall arrives through the
+// stock aoMap path, which in an environment-lit scene like this one is most of
+// the light reaching that texel.
+const STICKER_EDGE_OCCLUSION = 1;
+// Every film is scratched, but only nine carry one of the broad curved nail
+// impressions. Each entry selects a source impression, places it at a different
+// local point on the film, and rotates the cut in quarter turns. The selection
+// is fixed to the physical films, so dents follow their stickers through turns.
+const STICKER_NAIL_CUTS = new Map([
+  [0,  { source: [.23,.69], position: [ .22, .20], turns: 0 }],
+  [10, { source: [.84,.74], position: [ .18,-.22], turns: 0 }],
+  [15, { source: [.25,.38], position: [ .22,-.18], turns: 0 }],
+  [21, { source: [.50,.16], position: [-.24,-.25], turns: 0 }],
+  [29, { source: [.66,.84], position: [-.18, .22], turns: 0 }],
+  [35, { source: [.23,.69], position: [ .20,-.24], turns: 2 }],
+  [41, { source: [.84,.74], position: [-.20, .22], turns: 2 }],
+  [45, { source: [.25,.38], position: [-.20, .24], turns: 1 }],
+  [52, { source: [.66,.84], position: [-.24,-.20], turns: 3 }],
+]);
+// Deliberate cuts from the supplied sheet, in texture UV space, avoiding the
+// recognizable curved impressions.
+const STICKER_SCRATCH_CROPS = [[.50,.65], [.50,.48], [.72,.50], [.72,.25], [.82,.20], [.18,.18], [.42,.82], [.18,.84], [.82,.45]];
 
 // Wear changes the material response as well as adding surface detail. These
 // offsets are anchored to the Studio Small 08 UV calibration: its clean
@@ -297,6 +342,11 @@ const sharedMap = (key, build) => {
 // Bump this when the baked atlas changes so an already-open app cannot keep
 // rendering a stale alpha mask from the previous session.
 const STICKER_WEAR_MAP_KEY = "wear-sticker-alpha-v7";
+const STICKER_NORMAL_MAP_KEY = "wear-sticker-normal-v1";
+const STICKER_CLEAN_NORMAL_MAP_KEY = "sticker-clean-normal-v1";
+const STICKER_HANDLING_MAP_KEY = "wear-sticker-handling-v1";
+const STICKER_HANDLING_NORMAL_MAP_KEY = "wear-sticker-handling-normal-v1";
+const STICKER_EDGE_MAP_KEY = "wear-sticker-edge-v1";
 
 // Photographic environments ship as Radiance RGBE files. Fetched once and held
 // as raw floats; the PMREM step needs a renderer and so happens per cube.
@@ -336,10 +386,16 @@ let appearanceConfiguration = "";
 // browser is idle so the first spawn does not pay for them.
 export function warmCube(model = "tiles", quality = "balanced", environment = "studio", wear = false) {
   sharedMap("grain", plasticGrain);
+  if (STICKERED(model)) sharedMap(STICKER_CLEAN_NORMAL_MAP_KEY, stickerCleanNormalMap);
   if (wear) {
     sharedMap("wear-normal", scratchNormalMap);
     sharedMap("wear-roughness", scratchRoughnessMap);
-    if (STICKERED(model)) sharedMap(STICKER_WEAR_MAP_KEY, stickerDamageMap);
+    if (STICKERED(model)) {
+      sharedMap(STICKER_NORMAL_MAP_KEY, stickerScratchNormalMap);
+      sharedMap(STICKER_HANDLING_MAP_KEY, stickerHandlingMap);
+      sharedMap(STICKER_HANDLING_NORMAL_MAP_KEY, stickerHandlingNormalMap);
+      sharedMap(STICKER_WEAR_MAP_KEY, stickerDamageMap);
+    }
     if (COATED(model)) sharedMap("wear-uv-normal", scratchClearcoatNormalMap);
   }
   if (COATED(model)) sharedMap("coating", () => coatingNormal());
@@ -480,6 +536,31 @@ function scratchRoughnessMap() {
   return wearTexture("worn-plastic-roughness.png", "Worn plastic roughness");
 }
 
+function stickerScratchNormalMap() {
+  // Channel 2 is a vinyl-only UV set. Plastic wear and the sticker damage atlas
+  // retain their original mappings on channels 0 and 1.
+  const texture = wearTexture("worn-sticker-normal.png", "Worn sticker normal");
+  texture.channel = 2;
+  return texture;
+}
+
+function stickerCleanNormalMap() {
+  // Channel 0 is the ordinary sticker UV: one supplied material tile per film.
+  return wearTexture("sticker-clean-normal.png", "Clean sticker normal");
+}
+
+function stickerHandlingMap() {
+  // Scuff haze and handled-surface mottle, without fingerprints or the retired
+  // scratch pattern from the plastic roughness map.
+  return wearTexture("worn-sticker-handling.png", "Worn sticker handling");
+}
+
+function stickerHandlingNormalMap() {
+  const texture = wearTexture("worn-sticker-handling-normal.png", "Worn sticker handling normal");
+  texture.channel = 3;
+  return texture;
+}
+
 function scratchClearcoatNormalMap() {
   // UV wear is baked into the orange-peel normal so scratches bend the topmost,
   // dominant reflection rather than hiding underneath the clear layer.
@@ -491,6 +572,21 @@ function stickerDamageMap() {
   // attached to the sticker perimeter. Each 256px tile has a transparent
   // gutter; mipmaps filter the torn edge when the cube is small or oblique.
   const texture = wearTexture("worn-sticker-alpha.png?v=7", "Worn sticker cutout");
+  texture.channel = 1;
+  texture.wrapS = texture.wrapT = T.ClampToEdgeWrapping;
+  return texture;
+}
+
+function stickerEdgeMap() {
+  // Rides the cutout's UV channel and its 8x8 tiling because it has to: a lip
+  // drawn against a contour the mask does not actually cut is worse than no lip
+  // at all. tools/bake-wear-textures.py emits the two files from one distance
+  // field for that reason -- rebake both or neither.
+  //
+  // R is contact occlusion, G and B are the lip normal's XY. Z is reconstructed
+  // in the shader rather than stored, which is what lets one RGB texture bound
+  // as `aoMap` carry both and costs this effect no sampler of its own.
+  const texture = wearTexture("worn-sticker-edge.png?v=1", "Worn sticker edge");
   texture.channel = 1;
   texture.wrapS = texture.wrapT = T.ClampToEdgeWrapping;
   return texture;
@@ -567,7 +663,24 @@ function softboxMap(size = 128) {
 }
 
 const VINYL_PROFILE = [[.399, .0618, 0], [.4009, .0627, .0036], [.399, .0618, .0072], [.38, .057, .0072], [.304, .057, .0072], [.114, .038, .0072]];
-const VINYL_ATLAS_PROFILE = [[.435, .065], [.437, .067], [.435, .066], [.40, .06], [.32, .06], [.12, .04]];
+// Where a shaped film's contour lands in the damage atlas. These used to be the
+// atlas's own outline -- .435, the radius `sticker_damage_atlas()` draws its
+// rounded square at -- on the reasonable-sounding theory that the film's edge
+// should sit on the mask's edge. But the mask's edge is its *fifty percent*
+// contour, so putting the film's outer rings there put them exactly on
+// `alphaTest`, and the three rings that carry the film's .0072 of thickness
+// read .24, .00 and .35. Every OG sticker had its moulded rim discarded, torn
+// or not, which left a flat plate with stair-stepped corners -- the model's
+// stickers had no thickness anywhere, and no tear was involved.
+//
+// So the contour is inset three texels (.0117 of a tile) instead. Three is not
+// a guess: at two the rim still fades to .83 once the mip chain is two levels
+// down, at three it holds .97 there and .78 at mip 3, well clear of the test,
+// and each further texel costs visible damage -- 48 of the 54 films keep a
+// bite at three, 44 at four, and only 33 at the nine texels that would match
+// the Stickers model's physical mapping. The rest of the profile is scaled by
+// the same ratio so the wrap stays proportional.
+const VINYL_ATLAS_PROFILE = [[.4233, .0633], [.4252, .0652], [.4233, .0642], [.3892, .0584], [.3114, .0584], [.1168, .0389]];
 const OG_VINYL_PROFILE = [[.400, .044, .0206], [.402, .046, .0242], [.400, .044, .0278], [.38, .05, .0278], [.30, .055, .0278], [.12, .04, .0278]];
 const SCULPTED_PROFILE = [[.48,.04,-.045], [.494,.043,-.021], [.497,.048,-.004], [.4875,.0499,.00151], [.4775,.052,.00634], [.4673,.054,.01047], [.4568,.0562,.01388], [.4461,.0583,.01655], [.4353,.0605,.01846], [.4243,.0628,.01962], [.4133,.065,.02], [.32,.07,.02], [.12,.05,.02]];
 const SCULPTED_CENTER_RINGS = [[.48,.04,-.045,1], [.494,.043,-.021,1], [.497,.052,-.004,1], [.4875,.0539,.00151,.975], [.4775,.056,.00634,.929], [.4673,.058,.01047,.88], [.4568,.0602,.01388,.83], [.4461,.0623,.01655,.779], [.4353,.0645,.01846,.731], [.4243,.0668,.01962,.687], [.4133,.065,.02,.643], [.365,.068,.02,.45], [.32,.07,.02,.2], [.285,.068,.02,0], [.195,.06,.02,0], [.12,.05,.02,0]];
@@ -594,7 +707,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
       ? SCULPTED_PROFILE
       : [[.423, .092, 0], [.444, .108, .010], [.450, .116, .026], [.446, .122, .044], [.432, .127, .060], [.392, .134, .070], [.32, .12, .078], [.23, .09, .085], [.12, .05, .089]];
   const col = cell % 3 - 1, row = 1 - Math.floor(cell / 3);
-  const positions = [], uvs = [], chipUvs = [], shades = [], indices = [], steps = 12;
+  const positions = [], uvs = [], chipUvs = [], stickerNormalUvs = [], handlingUvs = [], shades = [], indices = [], steps = 12;
   // Straight spans are sampled on the coated model only. Sampling them on every
   // model was tried and reverted: it doubles every cap and changes the shading
   // normals by hundredths of a degree. The X across a sculpted cap is not a
@@ -617,6 +730,45 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
   const tint = variant && variant.tint ? variant.tint : [1, 1, 1];
   const shift = variant ? variant.shift : [0, 0];
   const chip = variant?.chip ?? 0;
+  // Every sticker gets a cut and a quarter-turn variation. Most cuts contain
+  // ordinary scratches only; the sparse group is centered on the nail dents.
+  // Quarter turns keep the square crop inside the non-tileable source image.
+  const nailCut = STICKER_NAIL_CUTS.get(chip);
+  const stickerNormalRoll = (nailCut?.turns ?? chip * 3 % 4) * Math.PI / 2;
+  const c = Math.cos(stickerNormalRoll), s = Math.sin(stickerNormalRoll);
+  let stickerNormalCenterU, stickerNormalCenterV;
+  if (nailCut) {
+    const [targetU, targetV] = nailCut.position;
+    const rotatedTargetU = targetU * c - targetV * s;
+    const rotatedTargetV = targetU * s + targetV * c;
+    stickerNormalCenterU = nailCut.source[0] - rotatedTargetU * STICKER_NORMAL_UV_SCALE;
+    stickerNormalCenterV = nailCut.source[1] - rotatedTargetV * STICKER_NORMAL_UV_SCALE;
+  } else {
+    [stickerNormalCenterU, stickerNormalCenterV] = STICKER_SCRATCH_CROPS[chip % STICKER_SCRATCH_CROPS.length];
+  }
+  const stickerNormalUv = (x, y) => {
+    const u = x / .9, v = y / .9;
+    const ru = u * c - v * s, rv = u * s + v * c;
+    return [
+      stickerNormalCenterU + ru * STICKER_NORMAL_UV_SCALE,
+      stickerNormalCenterV + rv * STICKER_NORMAL_UV_SCALE,
+    ];
+  };
+  // Sample a different close crop of the handling sheet on every film. Quarter
+  // turns keep the crop inside the non-tileable texture while the seeded shift
+  // avoids cloned haze on neighbouring stickers.
+  const handlingRoll = chip % 4 * Math.PI / 2;
+  const handlingC = Math.cos(handlingRoll), handlingS = Math.sin(handlingRoll);
+  const handlingSpan = 1 - STICKER_HANDLING_UV_SCALE;
+  const handlingCenterU = STICKER_HANDLING_UV_SCALE / 2 + shift[0] * handlingSpan;
+  const handlingCenterV = STICKER_HANDLING_UV_SCALE / 2 + shift[1] * handlingSpan;
+  const handlingUv = (x, y) => {
+    const u = x / .9, v = y / .9;
+    return [
+      handlingCenterU + (u * handlingC - v * handlingS) * STICKER_HANDLING_UV_SCALE,
+      handlingCenterV + (u * handlingS + v * handlingC) * STICKER_HANDLING_UV_SCALE,
+    ];
+  };
   // The alpha atlas is 8x8. Its coordinates are deliberately derived from the
   // unshifted cap position: scratches may roll to a unique patch on each cap,
   // but a missing piece of vinyl must remain locked to a real sticker edge.
@@ -644,7 +796,7 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
     // the longer, coated shoulder; the uncoated speedcube uses its original
     // shallower profile and center height.
     const centerRings = shapedFilm ? profiles.map(([h, r, z]) => [h, r, z, 0]) : COATED(model) ? UV_CENTER_RINGS : SCULPTED_CENTER_RINGS;
-    const radialPositions = [], radialUvs = [], radialChipUvs = [], radialShades = [], radialIndices = [];
+    const radialPositions = [], radialUvs = [], radialChipUvs = [], radialStickerNormalUvs = [], radialHandlingUvs = [], radialShades = [], radialIndices = [];
     for (const [ring, [h, r, z, squareMix]] of centerRings.entries()) {
       const t = Math.min(1, (z - lowest) / span), ramp = t * t * (3 - 2 * t);
       const shade = AO_FLOOR === undefined ? 1 : AO_FLOOR + (1 - AO_FLOOR) * ramp;
@@ -657,6 +809,8 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
         radialPositions.push(x, y, z);
         radialUvs.push(x / .9 + .5 + shift[0], y / .9 + .5 + shift[1]);
         if (film) radialChipUvs.push(...filmChipUv(ring, i));
+        if (film) radialStickerNormalUvs.push(...stickerNormalUv(x, y));
+        if (film) radialHandlingUvs.push(...handlingUv(x, y));
         if (shaded) radialShades.push(shade * tint[0], shade * tint[1], shade * tint[2]);
       }
     }
@@ -668,6 +822,8 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
     const centerHeight = shapedFilm ? .0278 : COATED(model) ? COATING_CENTER : .020;
     radialPositions.push(0, 0, centerHeight); radialUvs.push(.5 + shift[0], .5 + shift[1]);
     if (film) radialChipUvs.push(...chipUv(0, 0));
+    if (film) radialStickerNormalUvs.push(...stickerNormalUv(0, 0));
+    if (film) radialHandlingUvs.push(...handlingUv(0, 0));
     if (shaded) radialShades.push(tint[0], tint[1], tint[2]);
     const radialLast = (centerRings.length - 1) * count;
     for (let i = 0; i < count; i++) radialIndices.push(radialLast + i, radialLast + (i + 1) % count, radialCenter);
@@ -676,6 +832,10 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
     radialGeometry.setAttribute("uv", new T.Float32BufferAttribute(radialUvs, 2));
     if (shaded) radialGeometry.setAttribute("color", new T.Float32BufferAttribute(radialShades, 3));
     if (film) radialGeometry.setAttribute("uv1", new T.Float32BufferAttribute(radialChipUvs, 2));
+    if (film) radialGeometry.setAttribute("uv2", new T.Float32BufferAttribute(radialStickerNormalUvs, 2));
+    if (film) radialGeometry.setAttribute("uv3", new T.Float32BufferAttribute(radialHandlingUvs, 2));
+    radialGeometry.userData.stickerNail = Boolean(nailCut);
+    radialGeometry.userData.stickerNailPosition = nailCut?.position ?? null;
     radialGeometry.setIndex(radialIndices);
     radialGeometry.computeVertexNormals();
     const radialNormals = radialGeometry.getAttribute("normal");
@@ -730,6 +890,8 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
         }
         positions.push(x, y, z); uvs.push(x / .9 + .5 + shift[0], y / .9 + .5 + shift[1]);
         if (film) chipUvs.push(...(shapedFilm ? filmChipUv(ring, corner * (steps + 1) + contourIndex) : chipUv(x, y)));
+        if (film) stickerNormalUvs.push(...stickerNormalUv(x, y));
+        if (film) handlingUvs.push(...handlingUv(x, y));
         if (shaded) shades.push(shade * tint[0], shade * tint[1], shade * tint[2]);
       }
     });
@@ -741,13 +903,17 @@ function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKER
     }
   }
   const center = positions.length / 3;
-  positions.push(0, 0, film ? shapedFilm ? .0278 : .0072 : COATED(model) ? COATING_CENTER : SCULPTED(model) ? .020 : .090); uvs.push(.5 + shift[0], .5 + shift[1]); if (film) chipUvs.push(...chipUv(0, 0)); if (shaded) shades.push(tint[0], tint[1], tint[2]);
+  positions.push(0, 0, film ? shapedFilm ? .0278 : .0072 : COATED(model) ? COATING_CENTER : SCULPTED(model) ? .020 : .090); uvs.push(.5 + shift[0], .5 + shift[1]); if (film) { chipUvs.push(...chipUv(0, 0)); stickerNormalUvs.push(...stickerNormalUv(0, 0)); handlingUvs.push(...handlingUv(0, 0)); } if (shaded) shades.push(tint[0], tint[1], tint[2]);
   const last = (profiles.length - 1) * count;
   for (let i = 0; i < count; i++) indices.push(last + i, last + (i + 1) % count, center);
   const geometry = new T.BufferGeometry();
   geometry.setAttribute("position", new T.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new T.Float32BufferAttribute(uvs, 2));
   if (film) geometry.setAttribute("uv1", new T.Float32BufferAttribute(chipUvs, 2));
+  if (film) geometry.setAttribute("uv2", new T.Float32BufferAttribute(stickerNormalUvs, 2));
+  if (film) geometry.setAttribute("uv3", new T.Float32BufferAttribute(handlingUvs, 2));
+  geometry.userData.stickerNail = Boolean(nailCut);
+  geometry.userData.stickerNailPosition = nailCut?.position ?? null;
   if (shaded) geometry.setAttribute("color", new T.Float32BufferAttribute(shades, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
@@ -1093,16 +1259,26 @@ export class RealisticCube {
       const speedcube = SCULPTED(model), coated = COATED(model), stickers = STICKERED(model);
       const finish = SURFACES[MODELS[model]?.surface] ?? SURFACES.tiles;
       this.coating = coated ? sharedMap("coating", () => coatingNormal()) : null;
+      this.stickerCleanNormal = !this.wear && stickers ? sharedMap(STICKER_CLEAN_NORMAL_MAP_KEY, stickerCleanNormalMap) : null;
       // Wear is an explicit appearance choice, independent of graphics quality.
       // These are finished static maps; no normal composition happens at runtime.
       this.scratches = this.wear ? sharedMap("wear-normal", scratchNormalMap) : null;
       this.scratchRoughness = this.wear ? sharedMap("wear-roughness", scratchRoughnessMap) : null;
+      this.stickerScratches = this.wear && stickers ? sharedMap(STICKER_NORMAL_MAP_KEY, stickerScratchNormalMap) : null;
+      this.stickerHandling = this.wear && stickers ? sharedMap(STICKER_HANDLING_MAP_KEY, stickerHandlingMap) : null;
+      this.stickerHandlingNormal = this.wear && stickers ? sharedMap(STICKER_HANDLING_NORMAL_MAP_KEY, stickerHandlingNormalMap) : null;
       this.scratchClearcoat = this.wear && coated ? sharedMap("wear-uv-normal", scratchClearcoatNormalMap) : null;
       this.stickerDamage = this.wear && stickers ? sharedMap(STICKER_WEAR_MAP_KEY, stickerDamageMap) : null;
+      this.stickerEdge = this.stickerDamage ? sharedMap(STICKER_EDGE_MAP_KEY, stickerEdgeMap) : null;
       if (this.scratches) this.scratches.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.scratchRoughness) this.scratchRoughness.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.stickerScratches) this.stickerScratches.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.stickerHandling) this.stickerHandling.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.stickerHandlingNormal) this.stickerHandlingNormal.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.stickerCleanNormal) this.stickerCleanNormal.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.scratchClearcoat) this.scratchClearcoat.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       if (this.stickerDamage) this.stickerDamage.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.stickerEdge) this.stickerEdge.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       const worn = this.wear ? finish.wear : null;
       const floor = this.wear ? WEAR_ROUGHNESS_FLOOR : 1;
       // Recessed internals: one moulded plastic for every model, in the colour
@@ -1192,35 +1368,48 @@ export class RealisticCube {
       // is what let the table's gloss entry for this model sit inert.
       const coat = coated ? {
         clearcoatRoughness: L.glossRough / floor,
-        clearcoatRoughnessMap: this.scratchRoughness,
+        // Stickered coated faces keep their own handled-vinyl response in the
+        // clear layer too; generic plastic scratch roughness belongs only to
+        // the exposed body and holder.
+        clearcoatRoughnessMap: stickers ? this.stickerHandling : this.scratchRoughness,
         clearcoatNormalMap: this.scratchClearcoat || this.coating,
         clearcoatNormalScale: new T.Vector2(worn ? worn.coat : .8, worn ? worn.coat : .8),
       } : {};
-      // Every model's gloss layer now samples the same roughness map, not just
-      // the coated one. On tiles and stickers the clearcoat is where nearly all
-      // the specular lives, so a scratch that dulls only the base layer dulls
-      // the half of the response nobody looks at — which is most of why the
-      // previous wear was invisible on exactly the two models with the
-      // strongest gloss. Dividing by the floor keeps the clean finish at its
-      // calibrated value, the same trick the coated path already used.
-      const gloss = this.wear && !coated
-        ? { clearcoatRoughness: L.glossRough / floor, clearcoatRoughnessMap: this.scratchRoughness }
-        : { clearcoatRoughness: L.glossRough };
+      const faceRoughness = stickers ? this.stickerHandling : this.scratchRoughness;
+      const faceNormal = stickers ? (this.wear ? this.stickerScratches : this.stickerCleanNormal) : this.scratches;
+      // Vinyl keeps its broad handling response in roughness; the supplied
+      // handling normal adds only low-strength clearcoat haze. Its old scratch
+      // roughness has been removed. Other finishes retain the combined plastic
+      // wear map. Dividing by the clean floor preserves calibration.
       // Pristine cubes keep the tiny procedural grain of a factory-new finish.
-      const surface = this.scratches
-        ? { normalMap: this.scratches, normalScale: new T.Vector2(worn.normal, worn.normal) }
+      const surface = faceNormal
+        ? { normalMap: faceNormal, normalScale: new T.Vector2(stickers && !this.wear ? STICKER_CLEAN_NORMAL_SCALE : worn.normal, stickers && !this.wear ? STICKER_CLEAN_NORMAL_SCALE : worn.normal) }
         : { bumpMap: this.grain, bumpScale: finish.bump };
       const damage = this.stickerDamage
         ? { alphaMap: this.stickerDamage, alphaTest: .5, alphaToCoverage: true }
         : {};
+      // Bound as aoMap purely for the occlusion in R; `tearRelief` reads the
+      // lip out of G and B through the same uniform and the same channel-1
+      // varying three.js has already declared for it.
+      const tear = this.stickerEdge
+        ? { aoMap: this.stickerEdge, aoMapIntensity: STICKER_EDGE_OCCLUSION }
+        : {};
+      const handlingCoat = this.stickerHandlingNormal
+        ? { clearcoatNormalMap: this.stickerHandlingNormal, clearcoatNormalScale: new T.Vector2(STICKER_HANDLING_NORMAL_SCALE, STICKER_HANDLING_NORMAL_SCALE) }
+        : {};
+      const cleanStickerCoat = this.stickerCleanNormal
+        ? { clearcoatNormalMap: this.stickerCleanNormal, clearcoatNormalScale: new T.Vector2(STICKER_CLEAN_CLEARCOAT_NORMAL_SCALE, STICKER_CLEAN_CLEARCOAT_NORMAL_SCALE) }
+        : {};
       const baseRoughness = finish.roughness;
-      this.faceMaterials = Object.fromEntries(["U", "R", "F", "D", "L", "B"].map(f => [f, this.material(new T.MeshPhysicalMaterial({ color: 0xffffff, roughness: baseRoughness / floor, roughnessMap: this.scratchRoughness, metalness: 0, clearcoat: L.gloss, ior: finish.ior, envMapIntensity: L.env, vertexColors: (speedcube && !stickers) || settings.detail, ...gloss, ...surface, ...coat, ...damage }))]));
+      const faceMaterial = surfaceValues => new T.MeshPhysicalMaterial({ color: 0xffffff, roughness: baseRoughness / floor, roughnessMap: faceRoughness, metalness: 0, clearcoat: L.gloss, ior: finish.ior, envMapIntensity: L.env, vertexColors: (speedcube && !stickers) || settings.detail, ...(this.wear && !coated ? { clearcoatRoughness: L.glossRough / floor, clearcoatRoughnessMap: faceRoughness } : { clearcoatRoughness: L.glossRough }), ...surfaceValues, ...coat, ...handlingCoat, ...cleanStickerCoat, ...damage, ...tear });
+      this.faceMaterials = Object.fromEntries(["U", "R", "F", "D", "L", "B"].map(f => [f, this.material(faceMaterial(surface))]));
+      if (this.stickerEdge) for (const material of this.faceMaterialValues()) this.tearRelief(material);
       if (this.scratches) {
         const settle = loaded => {
           if (this.disposed) return;
           this.canvas.dataset.wear = loaded ? "loaded" : "unavailable";
           if (!loaded) {
-            for (const material of Object.values(this.faceMaterials)) {
+            if (!stickers) for (const material of Object.values(this.faceMaterials)) {
               material.normalMap = null;
               material.bumpMap = this.grain;
               material.bumpScale = finish.bump;
@@ -1246,12 +1435,70 @@ export class RealisticCube {
           this.scratches.userData.listeners.push(settle);
         }
       }
+      if (this.stickerScratches) {
+        const settle = loaded => {
+          if (this.disposed) return;
+          this.canvas.dataset.wearStickerNormal = loaded ? "loaded" : "unavailable";
+          if (!loaded) for (const material of this.faceMaterialValues()) {
+            material.normalMap = null;
+            material.bumpMap = this.grain;
+            material.bumpScale = finish.bump;
+            material.needsUpdate = true;
+          }
+          this.render();
+        };
+        if (this.stickerScratches.userData.loaded) settle(true);
+        else if (this.stickerScratches.userData.failed) settle(false);
+        else {
+          this.canvas.dataset.wearStickerNormal = "loading";
+          this.stickerScratches.userData.listeners.push(settle);
+        }
+      }
+      if (this.stickerCleanNormal) {
+        const settle = loaded => {
+          if (this.disposed) return;
+          this.canvas.dataset.stickerCleanNormal = loaded ? "loaded" : "unavailable";
+          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
+            if (material.normalMap === this.stickerCleanNormal) {
+              material.normalMap = null;
+              if (material.clearcoatNormalMap === this.stickerCleanNormal) material.clearcoatNormalMap = null;
+              material.bumpMap = this.grain;
+              material.bumpScale = finish.bump;
+              material.needsUpdate = true;
+            }
+          }
+          this.render();
+        };
+        if (this.stickerCleanNormal.userData.loaded) settle(true);
+        else if (this.stickerCleanNormal.userData.failed) settle(false);
+        else {
+          this.canvas.dataset.stickerCleanNormal = "loading";
+          this.stickerCleanNormal.userData.listeners.push(settle);
+        }
+      }
+      if (this.stickerHandlingNormal) {
+        const settle = loaded => {
+          if (this.disposed) return;
+          this.canvas.dataset.wearStickerHandlingNormal = loaded ? "loaded" : "unavailable";
+          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
+            if (material.clearcoatNormalMap === this.stickerHandlingNormal) material.clearcoatNormalMap = null;
+            material.needsUpdate = true;
+          }
+          this.render();
+        };
+        if (this.stickerHandlingNormal.userData.loaded) settle(true);
+        else if (this.stickerHandlingNormal.userData.failed) settle(false);
+        else {
+          this.canvas.dataset.wearStickerHandlingNormal = "loading";
+          this.stickerHandlingNormal.userData.listeners.push(settle);
+        }
+      }
       if (this.scratchRoughness) {
         const settle = loaded => {
           if (this.disposed) return;
           this.canvas.dataset.wearRoughness = loaded ? "loaded" : "unavailable";
           if (!loaded) {
-            for (const material of Object.values(this.faceMaterials)) {
+            if (!stickers) for (const material of Object.values(this.faceMaterials)) {
               material.roughness = baseRoughness;
               material.roughnessMap = null;
               if (material.clearcoatRoughnessMap === this.scratchRoughness) {
@@ -1286,11 +1533,31 @@ export class RealisticCube {
           this.scratchRoughness.userData.listeners.push(settle);
         }
       }
+      if (this.stickerHandling) {
+        const settle = loaded => {
+          if (this.disposed) return;
+          this.canvas.dataset.wearStickerRoughness = loaded ? "loaded" : "unavailable";
+          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
+            material.roughness = baseRoughness;
+            material.roughnessMap = null;
+            material.clearcoatRoughness = L.glossRough;
+            material.clearcoatRoughnessMap = null;
+            material.needsUpdate = true;
+          }
+          this.render();
+        };
+        if (this.stickerHandling.userData.loaded) settle(true);
+        else if (this.stickerHandling.userData.failed) settle(false);
+        else {
+          this.canvas.dataset.wearStickerRoughness = "loading";
+          this.stickerHandling.userData.listeners.push(settle);
+        }
+      }
       if (this.scratchClearcoat) {
         const settle = loaded => {
           if (this.disposed) return;
           this.canvas.dataset.wearClearcoat = loaded ? "loaded" : "unavailable";
-          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
+          if (!loaded) for (const material of this.faceMaterialValues()) {
             material.clearcoatNormalMap = this.coating;
             material.needsUpdate = true;
           }
@@ -1307,7 +1574,7 @@ export class RealisticCube {
         const settle = loaded => {
           if (this.disposed) return;
           this.canvas.dataset.wearSticker = loaded ? "loaded" : "unavailable";
-          if (!loaded) for (const material of Object.values(this.faceMaterials)) {
+          if (!loaded) for (const material of this.faceMaterialValues()) {
             material.alphaMap = null;
             material.alphaTest = 0;
             material.needsUpdate = true;
@@ -1321,7 +1588,26 @@ export class RealisticCube {
           this.stickerDamage.userData.listeners.push(settle);
         }
       }
-      if (coated) for (const material of Object.values(this.faceMaterials)) this.coatingLighting(material);
+      if (this.stickerEdge) {
+        const settle = loaded => {
+          if (this.disposed) return;
+          this.canvas.dataset.wearStickerEdge = loaded ? "loaded" : "unavailable";
+          // The cutout stays either way: a tear with no lip is what shipped
+          // before this map existed, and it is still better than no tear.
+          if (!loaded) for (const material of this.faceMaterialValues()) {
+            material.aoMap = null;
+            material.needsUpdate = true;
+          }
+          this.render();
+        };
+        if (this.stickerEdge.userData.loaded) settle(true);
+        else if (this.stickerEdge.userData.failed) settle(false);
+        else {
+          this.canvas.dataset.wearStickerEdge = "loading";
+          this.stickerEdge.userData.listeners.push(settle);
+        }
+      }
+      if (coated) for (const material of this.faceMaterialValues()) this.coatingLighting(material);
       this.faces = Array.from({ length: 54 }, (_, i) => {
         // `i` walks the 54 caps face by face, so `i % 9` hands each position on
         // a face its own buffer and no two caps a viewer sees side by side
@@ -1359,6 +1645,54 @@ export class RealisticCube {
   }
   geometry(value) { this.geometries.push(value); return value; }
   material(value) { this.materials.push(value); return value; }
+  faceMaterialValues() {
+    return Object.values(this.faceMaterials ?? {});
+  }
+  tearRelief(material) {
+    // Give the cut its thickness back. The lip's slope is baked; all that
+    // happens here is sampling it in its own tangent frame and adding it to
+    // whatever the vinyl's scratches already did to the normal.
+    //
+    // The frame matters and is the one thing here that is easy to get wrong.
+    // `normal_fragment_begin` builds `tbn` from whichever UV set the normal map
+    // uses -- channel 2 for the sticker scratches, which carries a per-cap
+    // quarter turn. The lip lives on channel 1, which does not. Reusing `tbn`
+    // would rotate a quarter of the cube's lips by ninety degrees and light
+    // them from the wrong side, so the frame is rebuilt against the lip's own
+    // UVs. `nonPerturbedNormal` is the unperturbed surface, saved by that same
+    // chunk, which is what a tangent frame has to be raised from.
+    //
+    // Adding the lip's deviation rather than replacing the normal is UDN by
+    // another name: slopes add, and the scratches underneath survive.
+    //
+    // The clear layer gets the same deviation, and that is not a refinement --
+    // it is most of the effect. Vinyl is laminated, so the highlight that reads
+    // as thickness is a reflection in the laminate, not in the pigment beneath
+    // it; bending only the diffuse normal moved a shadow and left the bright
+    // side of the lip flat, which looked like a smudge rather than an edge.
+    const previous = material.onBeforeCompile;
+    material.onBeforeCompile = shader => {
+      previous?.(shader);
+      const guard = '#if defined( USE_AOMAP ) && ! defined( USE_TANGENT ) && ( defined( USE_NORMALMAP_TANGENTSPACE ) || defined( USE_CLEARCOAT_NORMALMAP ) )';
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        ${guard}
+          vec3 tearOffset = vec3( 0.0 );
+          vec2 tearSlope = ( texture2D( aoMap, vAoMapUv ).gb * 2.0 - 1.0 ) * ${STICKER_EDGE_NORMAL_SCALE.toFixed(2)};
+          float tearAmount = dot( tearSlope, tearSlope );
+          if ( tearAmount > 0.0001 ) {
+            vec3 tearN = vec3( tearSlope, sqrt( max( 1.0 - tearAmount, 0.0 ) ) );
+            tearOffset = getTangentFrame( - vViewPosition, nonPerturbedNormal, vAoMapUv ) * tearN - nonPerturbedNormal;
+            normal = normalize( normal + tearOffset );
+          }
+        #endif`)
+        .replace('#include <clearcoat_normal_fragment_maps>', `#include <clearcoat_normal_fragment_maps>
+        ${guard}
+          clearcoatNormal = normalize( clearcoatNormal + tearOffset );
+        #endif`);
+    };
+    material.customProgramCacheKey = () => 'sticker-tear-relief-v1';
+  }
   coatingLighting(material) {
     // Direct lights expose the pigment; the photographic cards supply the
     // clear-layer reflection. Avoid counting their diffuse fill a second time.
@@ -1963,7 +2297,7 @@ export class RealisticCube {
     if (!(scale > 0) || Math.abs(scale - this.envScale) < 1e-4) return;
     this.envScale = scale;
     const env = this.light.env = this.baseEnv * scale;
-    for (const material of Object.values(this.faceMaterials ?? {})) material.envMapIntensity = env;
+    for (const material of this.faceMaterialValues()) material.envMapIntensity = env;
     if (this.markMaterial && COATED(this.model)) this.markMaterial.envMapIntensity = env;
   }
 
@@ -2115,7 +2449,7 @@ export class RealisticCube {
     const env = next.env * this.envScale;
     this.light.env = env;
     const coated = COATED(this.model);
-    for (const material of Object.values(this.faceMaterials || {})) {
+    for (const material of this.faceMaterialValues()) {
       material.envMapIntensity = env;
       material.clearcoat = next.gloss;
       // Every model's gloss layer samples the wear map now, so the floor
@@ -2123,7 +2457,7 @@ export class RealisticCube {
       // tuning control has to make the same correction the constructor did, or
       // dragging a slider would quietly reset the finish to a darker one.
       material.clearcoatRoughness = this.wear && material.clearcoatRoughnessMap
-        ? next.glossRough / WEAR_ROUGHNESS_FLOOR
+        ? next.glossRough / (material.userData.roughnessFloor ?? WEAR_ROUGHNESS_FLOOR)
         : next.glossRough;
     }
     if (this.markMaterial && coated) this.markMaterial.envMapIntensity = env;

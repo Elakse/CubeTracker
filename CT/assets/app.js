@@ -46,6 +46,8 @@
       "M15 6 17 9h4v10H3V9h4l2-3h6Zm1 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
     settings:
       "M4 6h9m5 0h2M4 12h3m5 0h8M4 18h9m5 0h2M15 4v4M9 10v4M15 16v4",
+    warning:
+      "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0ZM12 9v4m0 4h.01",
     layers: "m12 3 9 4.5-9 4.5-9-4.5L12 3Zm9 9-9 4.5L3 12m18 4.5-9 4.5-9-4.5",
     star: "m12 3.6 2.6 5.4 5.9.8-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9L5.5 9.8l5.9-.8L12 3.6Z",
     shuffle: "M3 6h4l10 12h4M17 3l4 3-4 3M3 18h4l3-3.6M14 8.6 17 6M17 21l4-3-4-3",
@@ -1045,12 +1047,13 @@ ${rankCard(status)}
     return `<section class="panel panel-pad ${wide ? "wide" : ""}"><div class="panel-heading"><h2>Consistency</h2><span class="chip green">SUB-${esc(pref.target)}</span></div><div class="goal-topline"><div class="goal-number">${sample.length ? pct.toFixed(1) : "—"}<span>%</span></div><div class="goal-explainer"><strong>${hits} of ${sample.length} solves</strong> under ${esc(pref.target)}s<br>${delta != null ? `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} percentage points vs. previous window` : sample.length < pref.window ? `Building your ${pref.window}-solve window` : `Your latest ${pref.window} solves`}</div></div><div class="goal-progress"><div style="width:${pct}%"></div></div><div class="goal-controls"><label>Under <input type="number" min="0.01" max="3600" step="0.5" value="${esc(pref.target)}" data-control="target" aria-label="Target in seconds"> seconds</label><label>Last <input type="number" min="5" max="10000" step="1" value="${esc(pref.window)}" data-control="window" aria-label="Rolling window size"> solves</label></div>${chart(data, "goal", wide ? 230 : 98)}<p class="chart-note">Strictly under the target. +2 included, DNF counts as a miss. The dashed line is the linear trend.</p></section>`;
   }
   function cubePanel() {
+    const invalid = !scramblePending && scrambleInvalid();
     const label = scramblePending
       ? "PREPARING…"
-      : scrambleSource === "practice"
-        ? "PRACTICE SCRAMBLE"
+      : invalid
+        ? "PRACTICE SCRAMBLE · NOT VALID FOR RECORDS"
         : "";
-    return `<section class="panel cube-panel"><div class="panel-heading"><div><h2>Scramble</h2>${label ? `<p>${label}</p>` : ""}</div></div><div id="cube-mount"></div><div class="cube-bottom"><p class="scramble-mini" data-copyable>${esc(currentScramble)}</p><button class="btn btn-dark" data-action="practice">${icon("play")}Solve ${icon("arrow")}</button></div></section>`;
+    return `<section class="panel cube-panel"><div class="panel-heading"><div><h2>Scramble</h2>${label ? `<p class="cube-scramble-label${invalid ? " is-flagged" : ""}">${invalid ? icon("warning") : ""}${label}</p>` : ""}</div></div><div id="cube-mount"></div><div class="cube-bottom"><p class="scramble-mini" data-copyable>${esc(currentScramble)}</p><button class="btn btn-dark" data-action="practice">${icon("play")}Solve ${icon("arrow")}</button></div></section>`;
   }
   function activity(data) {
     const dayCounts = new Map();
@@ -1117,9 +1120,15 @@ ${rankCard(status)}
       .map(([k, v, hint, enabled]) => `<button class="stat-button" data-stat="${k}" ${enabled ? "" : "disabled"} aria-label="${k}: ${v}. ${hint}"><span>${k}${icon("arrow-up-right")}</span><strong>${v}</strong><small>${hint}</small></button>`)
       .join("")}</div>`;
   }
+  function solveBadges(s) {
+    return `${s.video ? `<i class="solve-video-badge" title="Video recorded">${icon("camera")}</i>` : ""}${s.invalidScramble ? `<i class="solve-warn-badge" title="Scramble not valid for records">${icon("warning")}</i>` : ""}`;
+  }
+  function solveFlagNote(s) {
+    return s.invalidScramble ? ", flagged: scramble not valid for records" : "";
+  }
   function solveRow(s, n) {
     const t = `${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}`;
-    return `<div class="solve-entry"><button class="solve-entry-open" data-solve="${esc(s.id)}" aria-label="Solve ${n}: ${t}${s.video ? ", with video" : ""}"><span class="solve-entry-time">${t}</span><span class="solve-entry-num">${s.video ? `<i class="solve-video-badge" title="Video recorded">${icon("camera")}</i>` : ""}#${n}</span></button><button class="solve-entry-del" data-delete="${esc(s.id)}" tabindex="-1" aria-label="Delete solve ${n}">${icon("trash")}</button></div>`;
+    return `<div class="solve-entry"><button class="solve-entry-open" data-solve="${esc(s.id)}" aria-label="Solve ${n}: ${t}${s.video ? ", with video" : ""}${solveFlagNote(s)}"><span class="solve-entry-time">${t}</span><span class="solve-entry-num">${solveBadges(s)}#${n}</span></button><button class="solve-entry-del" data-delete="${esc(s.id)}" tabindex="-1" aria-label="Delete solve ${n}">${icon("trash")}</button></div>`;
   }
   function solveRows(from, to) {
     const all = solves(),
@@ -1137,13 +1146,13 @@ ${rankCard(status)}
     button.setAttribute("aria-label", `${button.getAttribute("aria-label") || `Solve ${number}`}, with video`);
     const label = $(".solve-entry-num", button);
     if (label)
-      label.innerHTML = `<i class="solve-video-badge" title="Video recorded">${icon("camera")}</i>#${number}`;
+      label.innerHTML = `${solveBadges(solve)}#${number}`;
   }
   function focusPage() {
     const last = solves().find((x) => x.id === latestId),
       total = solves().length;
     panelCount = Math.max(PANEL_BATCH, Math.min(panelCount, total));
-    return `<div class="focus-stage timer-card" data-state="${timer.phase}"><div class="focus-main"><div class="focus-row"><div class="focus-media"><div id="cube-mount" class="focus-cube"></div><div class="live-camera" style="--camera-aspect:16 / 9"><video id="live-camera-feed" autoplay muted playsinline aria-label="Live recording preview"></video><span class="live-camera-rec"><i></i>REC</span></div></div><div class="focus-time"><div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(scramblePending ? "Preparing scramble…" : currentScramble)}</p><button class="icon-btn focus-scramble-refresh" data-action="new-scramble" title="New scramble" aria-label="New scramble">${icon("reset")}</button></div><button class="timer-surface" id="timer-surface" aria-label="Timer. ${pref.pressToStart ? (pref.inspection ? "Press to start inspection, press again to start the solve." : "Press to start, press again to stop.") : pref.inspection ? "Press to start inspection, then hold and release to start the solve." : "Hold space or press and hold here, then release to start."}"><span class="timer-state sr-only" id="timer-state" role="status">${last ? "SAVED" : "READY"}</span><span class="timer-digits" id="timer-digits">${last ? fmt(C.value(last)) : "0.00"}</span></button><div class="timer-result" id="timer-result">${last ? resultControls(last) : ""}</div></div></div></div><aside class="solve-panel">${panelStats()}<div class="solve-list" id="solve-list">${total ? solveRows(0, panelCount) : '<p class="solve-empty">No solves yet</p>'}<div class="solve-sentinel" id="solve-sentinel"${panelCount >= total ? " hidden" : ""}></div></div></aside></div>`;
+    return `<div class="focus-stage timer-card" data-state="${timer.phase}"><div class="focus-main"><div class="focus-row"><div class="focus-media"><div id="cube-mount" class="focus-cube"></div><div class="live-camera" style="--camera-aspect:16 / 9"><video id="live-camera-feed" autoplay muted playsinline aria-label="Live recording preview"></video><span class="live-camera-rec"><i></i>REC</span></div></div><div class="focus-time">${scrambleWarning()}<div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(scramblePending ? "Preparing scramble…" : currentScramble)}</p><button class="icon-btn focus-scramble-refresh" data-action="new-scramble" title="New scramble" aria-label="New scramble">${icon("reset")}</button></div><button class="timer-surface" id="timer-surface" aria-label="Timer. ${pref.pressToStart ? (pref.inspection ? "Press to start inspection, press again to start the solve." : "Press to start, press again to stop.") : pref.inspection ? "Press to start inspection, then hold and release to start the solve." : "Hold space or press and hold here, then release to start."}"><span class="timer-state sr-only" id="timer-state" role="status">${last ? "SAVED" : "READY"}</span><span class="timer-digits" id="timer-digits">${last ? fmt(C.value(last)) : "0.00"}</span></button><div class="timer-result" id="timer-result">${last ? resultControls(last) : ""}</div></div></div></div><aside class="solve-panel">${panelStats()}<div class="solve-list" id="solve-list">${total ? solveRows(0, panelCount) : '<p class="solve-empty">No solves yet</p>'}<div class="solve-sentinel" id="solve-sentinel"${panelCount >= total ? " hidden" : ""}></div></div></aside></div>`;
   }
   function cancelSceneRefresh() {
     if (!sceneIdleHandle) return;
@@ -1318,7 +1327,10 @@ ${rankCard(status)}
     return data
       .map((s) => {
         const idx = solves().indexOf(s);
-        return `<tr data-solve="${esc(s.id)}" tabindex="0" aria-label="Open solve ${idx + 1}"><td>#${idx + 1}</td><td class="time-cell">${fmt(C.value(s))}${s.penalty === "+2" ? "<small>+</small>" : ""}</td><td>${full ? fmt(C.average(solves().slice(Math.max(0, idx - 4), idx + 1), 5)) : s.penalty || "OK"}</td><td class="scramble-cell" data-copyable title="${esc(s.scramble)}">${esc(s.scramble || "No scramble recorded")}</td><td>${esc(longDate(s))}</td></tr>`;
+        const flag = s.invalidScramble
+          ? `<i class="solve-warn-badge" title="Scramble not valid for records">${icon("warning")}</i>`
+          : "";
+        return `<tr data-solve="${esc(s.id)}"${s.invalidScramble ? ' class="is-flagged"' : ""} tabindex="0" aria-label="Open solve ${idx + 1}${solveFlagNote(s)}"><td>#${idx + 1}</td><td class="time-cell">${fmt(C.value(s))}${s.penalty === "+2" ? "<small>+</small>" : ""}</td><td>${full ? fmt(C.average(solves().slice(Math.max(0, idx - 4), idx + 1), 5)) : s.penalty || "OK"}</td><td class="scramble-cell" data-copyable title="${esc(s.scramble)}">${flag}${esc(s.scramble || "No scramble recorded")}</td><td>${esc(longDate(s))}</td></tr>`;
       })
       .join("");
   }
@@ -3853,6 +3865,7 @@ ${rankCard(status)}
       rawMs: 0,
       penalty: "DNF",
       scramble: currentScramble,
+      invalidScramble: scrambleInvalid(),
       date: new Date().toISOString(),
       note: "",
     };
@@ -3888,6 +3901,7 @@ ${rankCard(status)}
       rawMs,
       penalty: timer.penalty,
       scramble: currentScramble,
+      invalidScramble: scrambleInvalid(),
       date: new Date().toISOString(),
       note: "",
     };
@@ -4101,6 +4115,15 @@ ${rankCard(status)}
       if (view !== "timer" && !timerBusy()) render();
     }, 180);
   });
+  // The random-move fallback produces a valid scramble text but not a random
+  // state, so solves made with it can never count as valid records.
+  function scrambleInvalid() {
+    return scrambleSource === "practice";
+  }
+  function scrambleWarning(className = "") {
+    if (scramblePending || !scrambleInvalid()) return "";
+    return `<p class="scramble-warning${className ? ` ${className}` : ""}" role="status">${icon("warning")}<span>Random-state generator unavailable. This scramble is not valid for records and the solve will be saved flagged.</span></p>`;
+  }
   function takeScramble() {
     if (scrambleWorker) {
       if (scrambleQueue.length) {
@@ -4542,7 +4565,7 @@ ${rankCard(status)}
         : "";
     showDialog(
       `Solve #${i + 1}`,
-      `<div class="detail-grid${hasVideo ? " has-video" : ""}"><div class="detail-visuals">${videoPane}<div class="detail-cube"><div id="drawer-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="Show solved cube">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="Play scramble">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="Show full scramble">${icon("last")}</button></div></div></div><div class="detail-side"><div class="detail-time">${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}</div><div class="detail-meta"><span>${esc(longDate(s))}</span><span>${esc(active().name)}</span></div><div class="detail-actions">${resultControls(s)}</div><div class="scramble-line" data-copyable><button class="icon-btn copy-inline" data-action="copy" aria-label="Copy scramble">${icon("copy")}</button><div id="scramble-notation" class="scramble-tokens"></div></div><label class="field">Note<textarea class="detail-note" id="solve-note" maxlength="2000" rows="3" placeholder="Add a note"></textarea></label></div></div>`,
+      `<div class="detail-grid${hasVideo ? " has-video" : ""}"><div class="detail-visuals">${videoPane}<div class="detail-cube"><div id="drawer-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="Show solved cube">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="Play scramble">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="Show full scramble">${icon("last")}</button></div></div></div><div class="detail-side"><div class="detail-time">${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}</div><div class="detail-meta"><span>${esc(longDate(s))}</span><span>${esc(active().name)}</span></div>${s.invalidScramble ? `<p class="scramble-warning detail-warning" role="status">${icon("warning")}<span>This scramble is not valid for records. The solve is flagged.</span></p>` : ""}<div class="detail-actions">${resultControls(s)}</div><div class="scramble-line" data-copyable><button class="icon-btn copy-inline" data-action="copy" aria-label="Copy scramble">${icon("copy")}</button><div id="scramble-notation" class="scramble-tokens"></div></div><label class="field">Note<textarea class="detail-note" id="solve-note" maxlength="2000" rows="3" placeholder="Add a note"></textarea></label></div></div>`,
       `solve-detail${hasVideo ? " solve-detail-video" : ""}`,
     );
     drawerId = id;
@@ -4944,7 +4967,7 @@ ${rankCard(status)}
     showDialog(
       "Guide & shortcuts",
       `<div class="guide-studio"><div><strong>See what progress feels like</strong><p>Try every reward, earned frame, and inspection cue on the timer stage.</p></div><button class="btn btn-dark" data-action="effects-demo">${icon("play")}Animation studio</button></div><p><strong>Your sub-time title.</strong> Starts after 500 attempts and uses their arithmetic mean, including +2. A DNF makes that window DNF. Your best consecutive 500 across the entire category earns your title, including imported history, independently of the overview range. Special titles: sub 60, 45, 30, 25, 20, 15, 10, 8, 7, 6 and 5 seconds.</p><p><strong>Progress & rust.</strong> The category's global mean sets ordinary intervals: below 20s → 0.5s; below 30s → 1s; below 2min → 5s; below 10min → 20s. Beyond that, a 1–2–5 scale grows with your mean. A title gets rusty when the current 500 exceeds its threshold by more than one interval from that threshold's band. Return within that margin to shake off the rust; your earned title remains.</p>` +
-      `<p><strong>Import.</strong> Import a CubeDesk-style CSV with <code>Index,Time,Scramble,Date</code>. Create your own categories; each gets a separate CSV.</p><p><strong>Timing.</strong> The timer is the home screen. Without inspection, hold space for 350ms, release when the digits light up, then press any key to stop. Settings can swap the hold for a single press. On touch screens, press and hold the timer. Turn inspection on in Settings: a normal press then starts inspection immediately, and you hold and release for 350ms to start the solve. At 15 seconds the result gets +2; at 17 the attempt is saved as a DNF on its own and the timer is ready for the next one.</p><p><strong>Video.</strong> Enable solve recording in Settings, then choose the camera, resolution and frame rate. The camera stays ready so hold-mode and inspection recordings begin immediately; single-press recording begins when that press is released. A camera badge marks recorded solves. Their player loops without controls and pauses or resumes when clicked.</p><p><strong>Solves.</strong> The list on the right holds every solve, newest first. Click one for its scramble, reconstruction and note, or use the button on the row to delete it. Move the pointer to the left edge for categories and the rest of the app.</p><p><strong>Cube.</strong> Drag to rotate. Click the cube to switch between the 3D view and the flat net. Open a solve to step through its moves or play the sequence. Start white-up, green-front.</p><p><strong>Scramble source.</strong> In local server mode, a background worker generates random cube states and solves them backward into verified scrambles. In standalone HTML mode, the timer uses 20 random moves and labels them accordingly. Neither mode is an official competition scramble source.</p><p><strong>Files.</strong> Open <code>Start CubeTracker.cmd</code> for automatic CSV saving beside the HTML. Opening the HTML directly uses browser storage; connect a folder or export to keep CSVs.</p><div class="help-grid"><span>Open timer</span><kbd>T</kbd><span>Next scramble (timer)</span><kbd>N</kbd><span>Hold, then release to start</span><kbd>Space</kbd><span>Instant start (timer focused)</span><kbd>Enter</kbd><span>Cancel an active attempt</span><kbd>Esc</kbd><span>This guide</span><kbd>?</kbd></div><p class="chart-note">Rolling averages retain DNFs. +2 counts toward time. Sub-target percentages count every attempt.</p>`,
+      `<p><strong>Import.</strong> Import a CubeDesk-style CSV with <code>Index,Time,Scramble,Date</code>. Create your own categories; each gets a separate CSV.</p><p><strong>Timing.</strong> The timer is the home screen. Without inspection, hold space for 350ms, release when the digits light up, then press any key to stop. Settings can swap the hold for a single press. On touch screens, press and hold the timer. Turn inspection on in Settings: a normal press then starts inspection immediately, and you hold and release for 350ms to start the solve. At 15 seconds the result gets +2; at 17 the attempt is saved as a DNF on its own and the timer is ready for the next one.</p><p><strong>Video.</strong> Enable solve recording in Settings, then choose the camera, resolution and frame rate. The camera stays ready so hold-mode and inspection recordings begin immediately; single-press recording begins when that press is released. A camera badge marks recorded solves. Their player loops without controls and pauses or resumes when clicked.</p><p><strong>Solves.</strong> The list on the right holds every solve, newest first. Click one for its scramble, reconstruction and note, or use the button on the row to delete it. Move the pointer to the left edge for categories and the rest of the app.</p><p><strong>Cube.</strong> Drag to rotate. Click the cube to switch between the 3D view and the flat net. Open a solve to step through its moves or play the sequence. Start white-up, green-front.</p><p><strong>Scramble source.</strong> In local server mode, a background worker generates random cube states and solves them backward into verified scrambles. In standalone HTML mode, the timer uses 20 random moves and labels them accordingly. Random-move scrambles are not valid for records: the timer warns while they are in use and every solve made with one is saved with a flag, shown on its row, in the solve library, and in its details. Neither mode is an official competition scramble source.</p><p><strong>Files.</strong> Open <code>Start CubeTracker.cmd</code> for automatic CSV saving beside the HTML. Opening the HTML directly uses browser storage; connect a folder or export to keep CSVs.</p><div class="help-grid"><span>Open timer</span><kbd>T</kbd><span>Next scramble (timer)</span><kbd>N</kbd><span>Hold, then release to start</span><kbd>Space</kbd><span>Instant start (timer focused)</span><kbd>Enter</kbd><span>Cancel an active attempt</span><kbd>Esc</kbd><span>This guide</span><kbd>?</kbd></div><p class="chart-note">Rolling averages retain DNFs. +2 counts toward time. Sub-target percentages count every attempt.</p>`,
     );
   }
   function loadDemo() {

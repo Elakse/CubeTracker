@@ -41,14 +41,14 @@
   const TUNING = /* cube-tuning:start */ {
   "studioSmall08": {
     "uv": {
-      "exposure": 0.882,
+      "exposure": 0.74,
       "hemi": 0.85,
-      "key": 2.2,
+      "key": 3.25,
       "rim": 0.72,
-      "fill": 1.1,
-      "env": 0.22,
-      "gloss": 0.85,
-      "glossRough": 0.07
+      "fill": 0.02,
+      "env": 0.16,
+      "gloss": 0.58,
+      "glossRough": 0.12
     },
     "speedcube": {
       "exposure": 0.38,
@@ -57,7 +57,7 @@
       "rim": 0.68,
       "fill": 0.7,
       "env": 0.76,
-      "gloss": 0.12,
+      "gloss": 0.65,
       "glossRough": 0.195
     },
     "tiles": {

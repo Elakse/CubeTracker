@@ -1189,6 +1189,18 @@ main {
 .cube-panel .panel-heading p {
   color: var(--muted-2);
 }
+.cube-panel .panel-heading p.cube-scramble-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cube-panel .panel-heading p.cube-scramble-label.is-flagged {
+  color: var(--amber-text);
+}
+.cube-scramble-label svg {
+  width: 12px;
+  height: 12px;
+}
 .cube-stage {
   height: 233px;
   position: relative;
@@ -2325,6 +2337,10 @@ dialog.solve-detail-video {
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
+}
+.detail-warning {
+  max-width: 100%;
+  margin: 0 auto 12px;
 }
 .scramble-line .scramble-tokens {
   margin: 0;
@@ -4032,6 +4048,28 @@ body.recording-video .live-camera {
 .focus-scramble:hover {
   color: var(--ink);
 }
+.scramble-warning {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 7px;
+  max-width: min(560px, 88vw);
+  padding: 6px 11px;
+  border: 1px solid var(--amber-line);
+  border-radius: 8px;
+  background: var(--amber-bg);
+  color: var(--amber-text);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: left;
+  transition: opacity .35s, transform .55s cubic-bezier(.16,1,.3,1);
+}
+.scramble-warning svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 1px;
+}
 .focus-scramble-refresh {
   flex: 0 0 auto;
   margin-top: 3px;
@@ -4175,6 +4213,18 @@ body.focus-mode .timer-result {
   width: 11px;
   height: 11px;
 }
+.solve-warn-badge {
+  display: inline-flex;
+  color: var(--warn);
+}
+.solve-warn-badge svg {
+  width: 11px;
+  height: 11px;
+}
+td.scramble-cell .solve-warn-badge {
+  margin-right: 6px;
+  vertical-align: -1px;
+}
 .solve-entry-del {
   flex: 0 0 auto;
   padding: 14px 11px 14px 5px;
@@ -4213,6 +4263,7 @@ body.focus-mode .timer-result {
 /* the screen clears itself once an attempt is under way */
 body.solving .focus-scramble,
 body.solving .focus-scramble-refresh,
+body.solving .scramble-warning,
 body.solving .focus-cube,
 body.solving .timer-result {
   opacity: 0;
