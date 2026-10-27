@@ -223,7 +223,6 @@
       cubeQuality: "auto",
       cubeEnvironment: "studio",
       cubeWear: false,
-      cubeFloorShadow: true,
       cubeCore: "black",
       cubeCross: "D",
       scrambleAnimation: true,
@@ -363,7 +362,6 @@
   if (!Object.hasOwn(CUBE_MODELS, pref.cubeFinish)) pref.cubeFinish = "standard";
   if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "studio";
   if (typeof pref.cubeWear !== "boolean") pref.cubeWear = false;
-  if (typeof pref.cubeFloorShadow !== "boolean") pref.cubeFloorShadow = true;
   if (!Object.hasOwn(CUBE_CORES, pref.cubeCore)) pref.cubeCore = "black";
   if (!Object.hasOwn(CUBE_CROSSES, pref.cubeCross)) pref.cubeCross = "D";
   // A first guess, not a verdict. Machines that advertise little get the safe
@@ -850,18 +848,18 @@
     const stat = (value, label, hint, cls = "") =>
       `<div class="ov-stat${cls}"><span class="ov-label">${label}</span><b>${value}</b><small>${hint || ""}</small></div>`;
     return `<div class="metric-grid">
-${rankCard(status)}
+${rankCard(status, true)}
 <div class="ov-stats">${stat(`${fmt(ao5)}${Number.isFinite(ao5) ? "<i>s</i>" : ""}`, "Global ao5 PB", "All solves · trimmed average", " best")}${stat(`${fmt(s.mean)}${Number.isFinite(s.mean) ? "<i>s</i>" : ""}`, "Session mean", `${s.valid.toLocaleString()} completed · ${s.dnf} DNF`)}${stat(s.count.toLocaleString(), "Total solves", `${days} day${days === 1 ? "" : "s"}`)}</div></div>`;
   }
   // The Overview card and the studio's preview. Materials come from rank-cards.css / rank-cards.js;
   // tier 0 (not ranked yet) shows a socket whose ring of 500 ticks fills as you solve.
-  function rankCard(status) {
+  function rankCard(status, link = false) {
     const s = status ? { ...status } : { count: solves().length, ready: false, best: Infinity, tier: 0 };
     const building = !s.ready, title = s.threshold ? `${s.rusty ? "Rusty sub" : "Sub"} ${CTEffects.timeLabel(s.threshold)}` : "Building your title";
     const value = building ? `${Math.min(s.count, 500)}<span class="unit">/ 500</span>` : `${fmt(s.best)}${Number.isFinite(s.best) ? '<span class="unit">s</span>' : ""}`;
     const foot = building ? `${500 - Math.min(s.count, 500)} solves to your first title` : `Current 500 · ${fmt(s.current)}${s.rusty ? " · Shake off the rust" : s.threshold ? " · This category" : ""}`;
     const frame = Rank.frame(s.tier);
-    return `<div class="metric rank-card${s.rusty ? " is-rusty" : ""}" data-tier="${frame}" style="--p:${building ? Math.min(s.count, 500) / 500 : 1}">${Rank.layers(frame)}<div class="metric-label"><span>${s.rusty ? "A little oxidation" : "Best 500 · lifetime"}</span>${icon("trophy")}</div><div class="rank-title">${title}</div><div class="metric-value">${value}</div><div class="metric-foot">${foot}</div></div>`;
+    return `<div class="metric rank-card${s.rusty ? " is-rusty" : ""}${link ? " is-link" : ""}"${link ? ' role="button" tabindex="0" aria-label="Show all ranks"' : ""} data-tier="${frame}" style="--p:${building ? Math.min(s.count, 500) / 500 : 1}">${Rank.layers(frame)}<div class="metric-label"><span>${s.rusty ? "A little oxidation" : "Best 500 · lifetime"}</span>${icon("trophy")}</div><div class="rank-title">${title}</div><div class="metric-value">${value}</div><div class="metric-foot">${foot}</div></div>`;
   }
   function chart(data, kind = "trend", height = 211) {
     if (!data.length)
@@ -1117,9 +1115,9 @@ ${rankCard(status)}
         const label = `${dateLabel} · ${future ? "Upcoming" : `${n.toLocaleString()} solves`}`;
         cells += `<button class="calendar-day heat-cell${future ? " future" : ""}${today ? " today" : ""}" data-level="${n && !future ? Math.max(1, Math.ceil(Math.sqrt(n / max) * 4)) : 0}" ${future ? "disabled" : ""} aria-label="${label}" data-day-info="${label}" data-day-date="${esc(dateLabel)}" data-day-count="${n}" aria-expanded="false" aria-controls="activity-day-popover" ${today ? 'aria-current="date"' : ""}><span>${day}</span></button>`;
       }
-      months += `<div class="activity-month"><h3>${start.toLocaleDateString("en", { month: "short" })}<span>${start.getFullYear()}</span></h3><div class="calendar-weekdays" aria-hidden="true">${["M", "T", "W", "T", "F", "S", "S"].map(x => `<span>${x}</span>`).join("")}</div><div class="month-grid">${cells}</div></div>`;
+      months += `<div class="activity-month"><h3>${start.toLocaleDateString("en", { month: "short" })}${m === 0 || start.getMonth() === 0 ? `<span>${start.getFullYear()}</span>` : ""}</h3><div class="calendar-weekdays" aria-hidden="true">${["M", "T", "W", "T", "F", "S", "S"].map(x => `<span>${x}</span>`).join("")}</div><div class="month-grid">${cells}</div></div>`;
     }
-    return `<section class="panel panel-pad activity-panel"><div class="panel-heading"><div><h2>Activity</h2><p>${activeDays} active days · ${total.toLocaleString()} solves · ${countMonths} months</p></div><div class="heat-legend"><span>Less</span>${[0,1,2,3,4].map(x => `<i class="heat-cell" data-level="${x}"></i>`).join("")}<span>More</span></div></div><div class="activity-months" style="--months:${countMonths}">${months}</div><div id="activity-day-popover" class="activity-popover" role="status" hidden></div><div class="activity-day-info">Click a day to see its activity <span>Today is outlined</span></div></section>`;
+    return `<section class="panel panel-pad activity-panel"><div class="panel-heading"><h2 title="${activeDays} active days · ${total.toLocaleString()} solves · ${countMonths} months">Activity</h2><div class="heat-legend"><span>Less</span>${[0,1,2,3,4].map(x => `<i class="heat-cell" data-level="${x}"></i>`).join("")}<span>More</span></div></div><div class="activity-months" style="--months:${countMonths}">${months}</div><div id="activity-day-popover" class="activity-popover" role="status" hidden></div></section>`;
   }
   function overview() {
     const a = rangeSolves();
@@ -1773,7 +1771,7 @@ ${rankCard(status)}
       return;
     }
     try {
-      await loadCubeStudio();
+      if (!cubeStudio) cubeStudio = await import("./cube-realistic.js");
     } catch {
       previewFailed = true;
       mount._caseThumb = null;
@@ -2764,7 +2762,7 @@ ${rankCard(status)}
       this.stage.classList.add("cube-realistic");
       let phase = "load";
       try {
-        const studio = await loadCubeStudio();
+        const studio = cubeStudio || (cubeStudio = await import("./cube-realistic.js"));
         phase = "render";
         if (this.disposed || request !== this.appearanceRequest) return;
         const warm = this.slot === "appearance-cube" && studio.isAppearanceWarm(this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore);
@@ -4003,6 +4001,12 @@ ${rankCard(status)}
       else exitLightingStudio();
       return;
     }
+    const rankLink = e.target.closest?.(".rank-card.is-link");
+    if (rankLink && (e.key === "Enter" || e.code === "Space")) {
+      e.preventDefault();
+      ranks();
+      return;
+    }
     const solveRow = e.target.closest?.("tr[data-solve]");
     if (
       solveRow &&
@@ -4283,16 +4287,6 @@ ${rankCard(status)}
   // park and discard slots without repeating the dynamic import, and so the
   // idle warm-up below has somewhere to put it.
   let cubeStudio = null;
-  // The one way to get the renderer module, so settings that live outside a
-  // cube's identity (the floor shadow) are applied whichever screen loads it first.
-  function loadCubeStudio() {
-    if (cubeStudio) return Promise.resolve(cubeStudio);
-    return import("./cube-realistic.js").then(studio => {
-      cubeStudio = studio;
-      studio.setFloorShadow(pref.cubeFloorShadow);
-      return studio;
-    });
-  }
   let cubeWarming = 0;
   // Load and pre-build everything about every cube model that needs no WebGL
   // context — the renderer module, shared textures, environment photograph and
@@ -4309,7 +4303,8 @@ ${rankCard(status)}
         cubeWarming = setTimeout(run, 2000);
         return;
       }
-      loadCubeStudio().then(studio => {
+      (cubeStudio ? Promise.resolve(cubeStudio) : import("./cube-realistic.js")).then(studio => {
+        cubeStudio = studio;
         if (pref.cubeFinish !== "standard") studio.warmCube(pref.cubeFinish, pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear);
         return studio.warmAll(pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear, pref.cubeFinish);
       }).catch(() => {});
@@ -4369,6 +4364,7 @@ ${rankCard(status)}
     clearTimeout(dialogCloseTimer);
     clearTimeout(cubeApplyTimer);
     $("#dialog").classList.remove("closing");
+    Rank.unmount($("#dialog"));
     drawerScene?.destroy();
     closingAppearanceScene?.destroy();
     if (!wasAppearance) appearanceScene?.destroy();
@@ -4763,7 +4759,7 @@ ${rankCard(status)}
     // setting under a small preview.
     showDialog(
       "Appearance",
-      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3 class="group-label">Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3 class="group-label">Color theme<span class="group-value" data-accent-name>${accents.find(([value]) => value === pref.accent)[1]}</span></h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}" aria-label="${label}" title="${label}"><i class="accent-swatch"></i>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><h3 class="group-label">Cube</h3><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div>${crossSetting}</div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3 class="group-label">Cube colors</h3>${paletteChoices("cube", pref.cubePalette)}</div><div class="cube-setting cube-core-setting"><h3 class="group-label">Core</h3>${coreChoices("cube", pref.cubeCore)}${toggleRow("cube-floor-shadow", pref.cubeFloorShadow, "Floor shadow", "", "floor-shadow-toggle")}</div><div class="cube-setting cube-wear-setting">${toggleRow("cube-wear", pref.cubeWear, "Surface wear", "Scratches and handling marks")}</div><div class="cube-settings-row">${cubeSelect("cube-quality", "Graphics quality", CUBE_QUALITY, pref.cubeQuality)}${cubeSelect("cube-environment", "Environment", CUBE_ENVIRONMENTS, pref.cubeEnvironment)}</div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
+      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3 class="group-label">Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3 class="group-label">Color theme<span class="group-value" data-accent-name>${accents.find(([value]) => value === pref.accent)[1]}</span></h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}" aria-label="${label}" title="${label}"><i class="accent-swatch"></i>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><h3 class="group-label">Cube</h3><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div>${crossSetting}</div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3 class="group-label">Cube colors</h3>${paletteChoices("cube", pref.cubePalette)}</div><div class="cube-setting cube-core-setting"><h3 class="group-label">Core<span class="group-value" data-core-name>${CUBE_CORES[pref.cubeCore].label}</span></h3>${coreChoices("cube", pref.cubeCore)}</div><div class="cube-setting cube-wear-setting">${toggleRow("cube-wear", pref.cubeWear, "Surface wear", "Scratches and handling marks")}</div><div class="cube-settings-row">${cubeSelect("cube-quality", "Graphics quality", CUBE_QUALITY, pref.cubeQuality)}${cubeSelect("cube-environment", "Environment", CUBE_ENVIRONMENTS, pref.cubeEnvironment)}</div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
       "appearance-dialog",
     );
     loadAppearanceCube();
@@ -4788,7 +4784,7 @@ ${rankCard(status)}
       loadingPaint = new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 700)));
     }
     try {
-      const studioModule = loadCubeStudio();
+      const studioModule = cubeStudio ? Promise.resolve(cubeStudio) : import("./cube-realistic.js");
       const [loadedStudio] = await Promise.all([studioModule, loadingPaint]);
       cubeStudio ||= loadedStudio;
     } catch {
@@ -4894,7 +4890,6 @@ ${rankCard(status)}
     if ($('[data-control="cube-quality"]')) $('[data-control="cube-quality"]').value = pref.cubeQuality;
     if ($('[data-control="cube-environment"]')) $('[data-control="cube-environment"]').value = pref.cubeEnvironment;
     if ($('[data-control="cube-wear"]')) $('[data-control="cube-wear"]').checked = pref.cubeWear;
-    if ($('[data-control="cube-floor-shadow"]')) $('[data-control="cube-floor-shadow"]').checked = pref.cubeFloorShadow;
     $$("[data-cube-core]").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.cubeCore === pref.cubeCore)));
     $$("[data-core-name]").forEach(el => (el.textContent = CUBE_CORES[pref.cubeCore].label));
     $$("[data-cube-cross]").forEach(el => {
@@ -5018,6 +5013,18 @@ ${rankCard(status)}
       `<p>${server ? "Your workspace is connected to the local saver. Every solve and penalty change updates the category’s CSV beside CTU.html. A previous copy is kept in the backups folder." : "This HTML is saving a recovery copy in your browser. For automatic CSV files beside the HTML, open Start CubeTracker.cmd. You can also connect the HTML folder below in a supported browser."}</p><div class="file-list">${state.categories.map((c) => `<div><strong>${esc(c.name)}</strong><br>${esc(c.file || "No folder file yet")} · ${c.solves.length} solves</div>`).join("") || "<div>No categories yet.</div>"}${recorded.length ? `<div><strong>Video recordings</strong><br>${recorded.length.toLocaleString()} clips · ${videoSize} · ${server ? "videos folder" : "browser video storage"}</div>` : ""}</div>${!server ? '<p class="chart-note">A standalone HTML page needs you to choose a folder before it can write CSV files. Video recordings remain in this browser’s dedicated storage. Reconnect after reopening the page.</p>' : ""}<div class="dialog-actions">${!server ? '<button class="btn btn-dark" data-action="connect-folder">Connect a folder</button>' : ""}${writeError ? '<button class="btn btn-dark" data-action="retry-save">Retry save</button>' : ""}<button class="btn btn-quiet" data-action="export">Export current CSV</button></div>`,
     );
   }
+  // Every rank as its normal card, lowest first, so the progression reads top to bottom. Rusty variants are left out on purpose.
+  // Just the title on each card; the rank you hold is bigger and carries the trophy.
+  function ranks() {
+    const level = recordProfile()?.sub?.tier || 0;
+    const steps = CTEffects.SPECIAL.map((n, i) => {
+      const frame = Rank.frame(i + 1), here = i + 1 === level;
+      return `<div class="metric rank-card${here ? " is-here" : ""}" data-tier="${frame}"${here ? ' aria-current="true"' : ""} style="--p:1">${Rank.layers(frame)}${here ? `<span class="rank-here">${icon("trophy")}</span>` : ""}<div class="rank-title">Sub ${CTEffects.timeLabel(n)}</div></div>`;
+    }).join("");
+    showDialog("Ranks", `<div class="ranks-scroll">${steps}</div>`, "ranks-dialog");
+    Rank.mount($("#dialog"));
+    $(".ranks-scroll .is-here")?.scrollIntoView({ block: "center" });
+  }
   function help() {
     showDialog(
       "Guide & shortcuts",
@@ -5125,6 +5132,10 @@ ${rankCard(status)}
       if (!selectionInside(row)) openSolve(row.dataset.solve);
       return;
     }
+    if (!b && e.target.closest(".rank-card.is-link")) {
+      ranks();
+      return;
+    }
     if (!b || b.disabled) return;
     if (timerBusy() && !b.closest(".timer-surface")) return;
     if (b.matches("[data-copyable]") && selectionInside(b)) return;
@@ -5135,6 +5146,8 @@ ${rankCard(status)}
     }
     if (b.dataset.view) {
       navigate(b.dataset.view);
+      closeSidebar();
+      b.blur();
       return;
     }
     if (b.dataset.category) {
@@ -5552,13 +5565,6 @@ ${rankCard(status)}
       case "cube-wear":
         pref.cubeWear = e.target.checked;
         applyCubeSelection();
-        return;
-      // Live, like a palette change: no rebuild, no loading shell.
-      case "cube-floor-shadow":
-        pref.cubeFloorShadow = e.target.checked;
-        savePref();
-        cubeStudio?.setFloorShadow(pref.cubeFloorShadow);
-        trainerThumbs.forEach(el => { if (el.firstElementChild) paintThumb(el); });
         return;
       case "video-record-inspection":
         pref.videoRecordInspection = e.target.checked;

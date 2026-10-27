@@ -2403,11 +2403,6 @@ dialog.solve-detail .dialog-body label.field {
 .cube-controls { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; min-width: 0; }
 .cube-settings-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .cube-wear-setting .toggle-row { padding: 12px 0; }
-/* Core swatches on the left, the floor-shadow switch on the right of the same row. */
-.cube-core-setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 16px; }
-.cube-core-setting > h3 { grid-column: 1 / -1; }
-.cube-core-setting > .cube-core-options { grid-column: 1; }
-.cube-core-setting > .floor-shadow-toggle { grid-column: 2; grid-row: 2; gap: 12px; padding: 0; }
 .appearance-section:first-child { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .appearance-scroll .mode-options { flex: 1 1 auto; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 10px; margin-top: 12px; }
 .appearance-scroll .mode-choice { align-items: stretch; gap: 9px; padding: 9px; border-radius: 12px; }
@@ -4335,7 +4330,6 @@ body.overview-view .cube-placeholder { min-height: 0; height: 100%; padding: 10p
 .activity-popover[hidden] { display: none; }
 .activity-popover strong { font-size: var(--fs-small); font-weight: 600; }
 .activity-popover span { color: var(--muted); font-size: var(--fs-micro); }
-.activity-day-info { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-micro); color: var(--muted); margin-top: 9px; min-height: 12px; }
 body:not(.overview-view) .activity-months { height: 170px; flex: auto; }
 @media (min-width: 961px) and (max-height: 720px) {
   body.overview-view .page-enter { grid-template-rows: auto auto minmax(130px, 1fr) 186px; gap: 9px; }
@@ -4372,8 +4366,6 @@ body:not(.overview-view) .activity-months { height: 170px; flex: auto; }
   body.overview-view .panel-heading { gap: 4px; }
   body.overview-view .panel-heading h2 { font-size: var(--fs-body); }
   body.overview-view .segmented button { font-size: var(--fs-micro); padding: 4px; }
-  body.overview-view .activity-panel .panel-heading p { font-size: var(--fs-micro); }
-  .activity-day-info span { display: none; }
 }
 /* On exceptionally short windows, retain access instead of clipping controls. */
 @media (max-height: 560px) {
@@ -5061,3 +5053,28 @@ body.timing .training-panel {
 }
 
 body.solving .panel-stats { opacity: 0; }
+
+/* Overview rank card opens the list of every rank. */
+.rank-card.is-link { cursor: pointer; transition: transform .2s cubic-bezier(.22,.75,.25,1), box-shadow .2s; }
+.rank-card.is-link:hover { transform: translateY(-2px); }
+.rank-card.is-link:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+
+/* Ranks dialog: the normal cards stacked, lowest rank first. No scrollbar; the soft edges are the cue that it scrolls,
+   and the padding keeps every card's shadow inside the scroller so nothing is cut off. */
+.ranks-dialog { width: min(500px, calc(100vw - 30px)); height: min(840px, calc(100dvh - 34px)); overflow: hidden; }
+.ranks-dialog #dialog-content { display: flex; flex-direction: column; height: 100%; }
+.ranks-dialog .dialog-head { flex: none; }
+.ranks-dialog .dialog-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; padding: 0; }
+.ranks-scroll {
+  display: flex; flex-direction: column; gap: 16px; flex: 1 1 auto; min-height: 0;
+  padding: 28px 34px 40px; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: none; -ms-overflow-style: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 22px, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 22px, #000 calc(100% - 26px), transparent 100%);
+}
+.ranks-scroll::-webkit-scrollbar { width: 0; height: 0; }
+/* Same size and proportions (2.3 : 1) as the Overview card for every rank; only the trophy marks the one you hold. */
+.ranks-scroll .metric.rank-card { flex: none; width: 100%; min-height: 0; aspect-ratio: 2.3 / 1; padding: 0 32px; justify-content: center; transition: none; }
+.ranks-scroll .rank-card .rank-title { margin: 0; font-size: 36px; font-weight: 800; letter-spacing: -1px; }
+.ranks-scroll .rank-card > .rank-here { position: absolute; z-index: 3; top: 18px; right: 20px; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: var(--rk-ink); background: color-mix(in srgb, var(--rk-ink) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rk-ink) 30%, transparent); }
+.ranks-scroll .rank-here svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

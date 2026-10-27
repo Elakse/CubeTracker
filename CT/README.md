@@ -40,7 +40,7 @@ Exports are newest first, matching the original file workflow. The app analyzes 
 
 ## Interface
 
-The sidebar stays out of the way: move the pointer to the left edge of the window and it slides out over a blurred page, then slides back when the pointer leaves. On narrow windows it stays as a fixed icon rail.
+The sidebar stays out of the way: move the pointer to the left edge of the window and it slides out over a blurred page, then slides back when the pointer leaves, or as soon as you pick a screen (`node tests/sidebar-close.cjs`). On narrow windows it stays as a fixed icon rail.
 
 The theme follows your system setting. The sidebar toggle overrides it and remembers the choice.
 

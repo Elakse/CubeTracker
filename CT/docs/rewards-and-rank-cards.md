@@ -39,6 +39,10 @@ Levels: level = index in `SPECIAL` + 1. A level is not the same as a card design
 
 Every frame also has a rusty variant that decays in its own way (verdigris on bronze, a power cut on Aurora, a broken sign on Neon, and so on).
 
+## The ranks dialog
+
+Clicking (or pressing Enter on) the Overview rank card opens `ranks()` in `app.js`: all twelve normal cards stacked, Sub 60 first, built from the same `.rank-card` markup and CTRank layers and kept at the Overview card's 2.3 : 1 proportion. Rusty variants are never shown. Every card is the same size and carries only its title; the rank you hold (`.is-here`) is told apart by the trophy badge (`.rank-here`) alone. The list has no scrollbar (soft fades at both ends instead) and its padding keeps every card's shadow inside the scroller. It opens scrolled to the current rank. `Rank.mount` runs on the dialog and `Rank.unmount` on its `close` event, so WebGL and fire contexts are given back. The card is only a link on Overview (`rankCard(status, true)` adds `.is-link`); the Animation studio preview is not. `node tests/ranks-dialog.cjs` covers it (Chrome and Playwright).
+
 ## Where a card goes, how long it stays
 
 - **Under the lowest control.** `Motion.place()` puts the card directly under the OK / +2 / DNF row (or under the time when there are no buttons), never over them. It lives in the free area: right of the navigation, left of the solve panel on wide screens, above the solve list on phones.
