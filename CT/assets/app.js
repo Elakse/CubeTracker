@@ -223,6 +223,7 @@
       cubeQuality: "auto",
       cubeEnvironment: "studio",
       cubeWear: false,
+      cubeFloorShadow: true,
       cubeCore: "black",
       cubeCross: "D",
       scrambleAnimation: true,
@@ -362,6 +363,7 @@
   if (!Object.hasOwn(CUBE_MODELS, pref.cubeFinish)) pref.cubeFinish = "standard";
   if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "studio";
   if (typeof pref.cubeWear !== "boolean") pref.cubeWear = false;
+  if (typeof pref.cubeFloorShadow !== "boolean") pref.cubeFloorShadow = true;
   if (!Object.hasOwn(CUBE_CORES, pref.cubeCore)) pref.cubeCore = "black";
   if (!Object.hasOwn(CUBE_CROSSES, pref.cubeCross)) pref.cubeCross = "D";
   // A first guess, not a verdict. Machines that advertise little get the safe
@@ -1772,6 +1774,7 @@ ${rankCard(status, true)}
     }
     try {
       if (!cubeStudio) cubeStudio = await import("./cube-realistic.js");
+      cubeStudio.setFloorShadow(pref.cubeFloorShadow);
     } catch {
       previewFailed = true;
       mount._caseThumb = null;
@@ -2583,8 +2586,7 @@ ${rankCard(status, true)}
     throbber.classList.remove("is-leaving");
     return throbber;
   }
-  // Fade the throbber and its veil, then take the shell down. Interrupting with
-  // beginCubeLoading restores both before the fade completes.
+  // Fade the throbber, then reveal the cube. A new load cancels the fade.
   function endCubeLoading(mount, onComplete) {
     if (!mount || !mount.classList.contains("cube-loading")) { onComplete?.(); return; }
     mount.classList.add("cube-loading-out");
@@ -2707,8 +2709,7 @@ ${rankCard(status, true)}
         }
         if (first && this.entrance) this.startEntrance();
       };
-      if (this.slot === "appearance-cube" || this.slot === "case-cube") endCubeLoading(this.mount, reveal);
-      else { endCubeLoading(this.mount); reveal(); }
+      endCubeLoading(this.mount, reveal);
     }
     replayMaterialize() {
       const stage = this.stage;
@@ -2763,6 +2764,7 @@ ${rankCard(status, true)}
       let phase = "load";
       try {
         const studio = cubeStudio || (cubeStudio = await import("./cube-realistic.js"));
+        studio.setFloorShadow(pref.cubeFloorShadow);
         phase = "render";
         if (this.disposed || request !== this.appearanceRequest) return;
         const warm = this.slot === "appearance-cube" && studio.isAppearanceWarm(this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore);
@@ -4305,6 +4307,7 @@ ${rankCard(status, true)}
       }
       (cubeStudio ? Promise.resolve(cubeStudio) : import("./cube-realistic.js")).then(studio => {
         cubeStudio = studio;
+        studio.setFloorShadow(pref.cubeFloorShadow);
         if (pref.cubeFinish !== "standard") studio.warmCube(pref.cubeFinish, pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear);
         return studio.warmAll(pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear, pref.cubeFinish);
       }).catch(() => {});
@@ -4759,7 +4762,7 @@ ${rankCard(status, true)}
     // setting under a small preview.
     showDialog(
       "Appearance",
-      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3 class="group-label">Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3 class="group-label">Color theme<span class="group-value" data-accent-name>${accents.find(([value]) => value === pref.accent)[1]}</span></h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}" aria-label="${label}" title="${label}"><i class="accent-swatch"></i>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><h3 class="group-label">Cube</h3><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div>${crossSetting}</div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3 class="group-label">Cube colors</h3>${paletteChoices("cube", pref.cubePalette)}</div><div class="cube-setting cube-core-setting"><h3 class="group-label">Core<span class="group-value" data-core-name>${CUBE_CORES[pref.cubeCore].label}</span></h3>${coreChoices("cube", pref.cubeCore)}</div><div class="cube-setting cube-wear-setting">${toggleRow("cube-wear", pref.cubeWear, "Surface wear", "Scratches and handling marks")}</div><div class="cube-settings-row">${cubeSelect("cube-quality", "Graphics quality", CUBE_QUALITY, pref.cubeQuality)}${cubeSelect("cube-environment", "Environment", CUBE_ENVIRONMENTS, pref.cubeEnvironment)}</div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
+      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3 class="group-label">Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3 class="group-label">Color theme<span class="group-value" data-accent-name>${accents.find(([value]) => value === pref.accent)[1]}</span></h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}" aria-label="${label}" title="${label}"><i class="accent-swatch"></i>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><h3 class="group-label">Cube</h3><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div>${crossSetting}</div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3 class="group-label">Cube colors</h3>${paletteChoices("cube", pref.cubePalette)}</div><div class="cube-setting cube-core-setting"><h3 class="group-label">Core</h3><div class="cube-core-row">${coreChoices("cube", pref.cubeCore)}${toggleRow("cube-floor-shadow", pref.cubeFloorShadow, "Floor shadow", "", "cube-floor-shadow-toggle")}</div></div><div class="cube-setting cube-wear-setting">${toggleRow("cube-wear", pref.cubeWear, "Surface wear", "Scratches and handling marks")}</div><div class="cube-settings-row">${cubeSelect("cube-quality", "Graphics quality", CUBE_QUALITY, pref.cubeQuality)}${cubeSelect("cube-environment", "Environment", CUBE_ENVIRONMENTS, pref.cubeEnvironment)}</div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
       "appearance-dialog",
     );
     loadAppearanceCube();
@@ -4787,6 +4790,7 @@ ${rankCard(status, true)}
       const studioModule = cubeStudio ? Promise.resolve(cubeStudio) : import("./cube-realistic.js");
       const [loadedStudio] = await Promise.all([studioModule, loadingPaint]);
       cubeStudio ||= loadedStudio;
+      cubeStudio.setFloorShadow(pref.cubeFloorShadow);
     } catch {
       if (opening) navigate(lightingReturnView);
       toast("The lighting studio could not load on this device.", true);
@@ -5562,6 +5566,11 @@ ${rankCard(status, true)}
         }
         return;
       }
+      case "cube-floor-shadow":
+        pref.cubeFloorShadow = e.target.checked;
+        savePref();
+        cubeStudio?.setFloorShadow(pref.cubeFloorShadow);
+        return;
       case "cube-wear":
         pref.cubeWear = e.target.checked;
         applyCubeSelection();

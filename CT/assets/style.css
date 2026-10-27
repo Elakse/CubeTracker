@@ -1961,7 +1961,6 @@ dialog {
   box-shadow: 0 24px 90px var(--shadow-dialog);
   color: var(--ink);
   background: var(--paper);
-  --cube-loading-bg: var(--paper);   /* a cube in a dialog sits on the dialog, so its loading cover matches it */
 }
 dialog[tabindex]:focus,
 dialog[tabindex]:focus-visible {
@@ -2402,6 +2401,8 @@ dialog.solve-detail .dialog-body label.field {
 .cube-preview-column { display: flex; flex-direction: column; align-items: center; justify-content: space-between; min-width: 0; }
 .cube-controls { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; min-width: 0; }
 .cube-settings-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.cube-core-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cube-core-row .cube-floor-shadow-toggle { gap: 10px; padding: 0; }
 .cube-wear-setting .toggle-row { padding: 12px 0; }
 .appearance-section:first-child { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .appearance-scroll .mode-options { flex: 1 1 auto; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 10px; margin-top: 12px; }
@@ -2425,9 +2426,6 @@ dialog.solve-detail .dialog-body label.field {
 .cube-carousel-track { position: relative; height: 100%; }
 .cube-carousel-track #appearance-cube { height: 100%; }
 .cube-carousel-track .cube-stage { height: 100%; }
-/* Keep the new cube hidden for the entire throbber fade. Its entrance starts
-   only when the loading shell has been removed. */
-#appearance-cube.cube-loading > .cube-stage { visibility: hidden; pointer-events: none; }
 .cube-carousel-caption { position: absolute; z-index: 2; right: 54px; bottom: 12px; left: 54px; text-align: center; pointer-events: none; }
 .cube-carousel-caption strong { display: block; color: var(--ink); font-size: var(--fs-lead); font-weight: 600; }
 /* No circle and no icon button: the outer quarter of the stage on each side is
@@ -3671,7 +3669,8 @@ body.timer-view {
   padding: 30px;
 }
 .cube-loading { position: relative; }
-.cube-loading::before { content: ""; position: absolute; inset: 0; z-index: 12; border-radius: inherit; background: var(--cube-loading-bg, var(--surface-2)); pointer-events: none; opacity: 1; transition: opacity .15s ease; }
+/* Hide the cube itself so the loader works over any background. */
+.cube-loading > .cube-stage { visibility: hidden; pointer-events: none; }
 /* The sprite animates with transform, not background-position, so the
    compositor keeps it moving while the main thread builds a cube. */
 .cube-throbber {
@@ -3697,12 +3696,10 @@ body.timer-view {
   pointer-events: none;
 }
 @starting-style {
-  .cube-loading::before,
   .cube-throbber { opacity: 0; }
 }
 /* Slower fade out than in, so the hand-off to the cube is readable. */
 .cube-throbber.is-leaving { opacity: 0; transition-duration: .3s; }
-.cube-loading.cube-loading-out::before { opacity: 0; transition-duration: .3s; }
 .cube-loading > .cube-throbber { position: absolute; z-index: 13; left: 50%; top: 50%; margin: -48px 0 0 -48px; }
 .loading .cube-throbber { margin: 0 auto 8px; }
 .lighting-loading {
@@ -3880,9 +3877,7 @@ body.focus-mode .focus-stage {
 .focus-media > * {
   grid-area: 1 / 1;
 }
-/* The timer's cube sits straight on the page, so the loading cover must be the page colour, not a card colour. */
 .focus-cube {
-  --cube-loading-bg: var(--bg);
   transition: opacity 0.35s;
 }
 .focus-cube .cube-stage {
@@ -4794,10 +4789,6 @@ dialog.case-dialog {
    like the appearance carousel. */
 #case-cube.cube-loading {
   height: min(236px, 34dvh);
-}
-#case-cube.cube-loading > .cube-stage {
-  visibility: hidden;
-  pointer-events: none;
 }
 .case-visual .scramble-tokens {
   margin: 12px -3px 4px;

@@ -2554,11 +2554,12 @@ export class RealisticCube {
     fill.position.set(...FILL_AT); this.scene.add(fill);
     const floor = new T.Mesh(this.geometry(new T.PlaneGeometry(200, 200)), this.material(new T.ShadowMaterial({ opacity: coated ? .04 : speedcube ? .025 : .17 })));
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -2.55;
+    // Keep the shadow receiver just below the cube's local bottom face.
+    floor.position.y = -1.52;
     floor.receiveShadow = true;
     floor.visible = FLOOR_SHADOW;
     this.floor = floor;
-    this.scene.add(floor);
+    this.root.add(floor);
   }
   setPalette(colors) {
     for (const [f, color] of Object.entries(colors)) this.faceMaterials[f].color.set(color);
