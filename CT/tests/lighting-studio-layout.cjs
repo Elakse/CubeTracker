@@ -70,6 +70,9 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('.studio-zoom').count(), 0, 'Redundant zoom controls are absent');
     assert.equal(await page.locator('[data-studio-accent]').count(), 0, 'App accent does not appear among cube settings');
     assert.equal(await page.locator('[data-control="studio-theme"]').count(), 0, 'Display theme does not appear among cube settings');
+    assert.equal(await page.locator('[data-studio-tab]').count(), 2, 'Studio has Light and Cube tabs');
+    await page.locator('[data-studio-tab="cube"]').click();
+    assert.equal(await page.locator('[data-studio-pane="cube"]').isVisible(), true, 'Cube tab shows the cube settings');
     assert.equal(await page.locator('[data-studio-core]').count(), 3, 'All core colors are present');
     assert.equal(await page.locator('[data-studio-cross]').count(), 6, 'All cross colors are present');
 

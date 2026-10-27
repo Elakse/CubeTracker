@@ -1,0 +1,45 @@
+/* Shared scrollbar: slim, rounded thumb, no track. Applies to every scroll
+   container that shows a scrollbar; containers that hide theirs on purpose
+   (scrollbar-width: none / ::-webkit-scrollbar {width: 0}) keep doing so,
+   because their own selectors are more specific than the universal rule here.
+   Do NOT set the standard scrollbar-width / scrollbar-color on elements:
+   Chromium then ignores the ::-webkit-scrollbar rules below. */
+:root {
+  --scroll-size: 12px;
+  --scroll-thumb: color-mix(in srgb, var(--muted) 38%, transparent);
+  --scroll-thumb-hover: color-mix(in srgb, var(--muted) 70%, transparent);
+  --scroll-thumb-active: var(--green);
+}
+*::-webkit-scrollbar {
+  width: var(--scroll-size);
+  height: var(--scroll-size);
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  min-height: 36px;
+  min-width: 36px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: content-box;
+  border-width: 2px;
+}
+*::-webkit-scrollbar-thumb:active {
+  background: var(--scroll-thumb-active);
+  background-clip: content-box;
+  border-width: 2px;
+}
+/* Firefox has no ::-webkit-scrollbar; give it the closest standard equivalent. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+}

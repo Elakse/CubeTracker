@@ -41,7 +41,7 @@
   const TUNING = /* cube-tuning:start */ {
   "studioSmall08": {
     "uv": {
-      "exposure": 0.74,
+      "exposure": 0.84,
       "hemi": 0.85,
       "key": 3.25,
       "rim": 0.72,
@@ -51,7 +51,7 @@
       "glossRough": 0.12
     },
     "speedcube": {
-      "exposure": 0.38,
+      "exposure": 0.43,
       "hemi": 0.75,
       "key": 0.72,
       "rim": 0.68,

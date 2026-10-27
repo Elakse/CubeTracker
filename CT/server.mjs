@@ -18,8 +18,10 @@ const root = path.dirname(fileURLToPath(import.meta.url)),
   // requires is missing, which is how a Node process holding old code in memory
   // gets retired. Bump a key here whenever the server gains something the page
   // cannot get from a stale process — `environments` is the asset allowlist
-  // that carries the current reflection-photograph allowlist.
-  capabilities = { video: 1, environments: 2, surfaces: 2, environmentTuning: 2 };
+  // that carries the current reflection-photograph allowlist (3 added
+  // /assets/dropdown.js and /assets/slider.js; 4 added the reward files
+  // rank-cards.css/js and reward-fx.js; 5 added /assets/scrollbars.css).
+  capabilities = { video: 1, environments: 5, surfaces: 2, environmentTuning: 2 };
 let queue = Promise.resolve();
 const TUNING_LIMITS = {
   exposure: [.3, 1.6],
@@ -491,8 +493,18 @@ const server = http.createServer(async (req, res) => {
         "/CTU.html",
         "/assets/core.js",
         "/assets/timer-effects.js",
+        "/assets/rank-cards.js",
+        "/assets/reward-fx.js",
+        "/assets/rank-cards.css",
+        "/assets/library.js",
+        "/assets/library.css",
+        "/assets/insights.js",
+        "/assets/insights.css",
+        "/assets/scrollbars.css",
         "/assets/trainer.js",
         "/assets/app.js",
+        "/assets/dropdown.js",
+        "/assets/slider.js",
         "/assets/cube-realistic.js",
         "/assets/environments.js",
         "/assets/gan-logo.png",
@@ -509,8 +521,8 @@ const server = http.createServer(async (req, res) => {
          "/assets/vendor/three.module.js",
          "/assets/vendor/RoundedBoxGeometry.js",
          "/assets/vendor/rgbe-loader.js",
-         "/assets/vendor/dm-sans.woff2",
-         "/assets/vendor/manrope.woff2",
+         "/assets/vendor/inter.woff2",
+         "/assets/vendor/jetbrains-mono.woff2",
       ].includes(requested) && !isInspectionCue && !isEnvironmentMap && !isWearMap
     ) {
       send(res, 404, { error: "Not found." });

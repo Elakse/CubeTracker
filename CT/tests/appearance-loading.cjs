@@ -80,7 +80,7 @@ const server = http.createServer((req, res) => {
         assert.ok(frames.some(frame => !frame.loading && !frame.hidden && frame.animation < 100), 'The entrance starts after loading ends');
       }
       while (await page.locator('.cube-carousel').getAttribute('data-model') !== 'standard') { await step(1); await settled(); }
-      await page.locator('[data-cube-quality="balanced"]').evaluate(el => el.click());
+      await page.locator('[data-control="cube-quality"]').selectOption('balanced');
       await step(1);
       await settled();
       assert.ok(await page.evaluate(() => window.tilesCanvas !== document.querySelector('#appearance-cube canvas')), 'Changing graphics settings invalidates cached models');

@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const C = require('../assets/core.js');
-const { profile, appendProfile, achievements, subStatus, interval, SPECIAL, inspectionCuePaths, pickInspectionCue } = require('../assets/timer-effects.js');
+const { profile, appendProfile, achievements, subStatus, interval, SPECIAL, inspectionCuePaths, pickInspectionCue, plan, demoEvent, demoGroups, tier, TITLE_EFFECT, MIN_REWARD_SOLVE } = require('../assets/timer-effects.js');
 const solve = (time, penalty = '') => ({ rawMs: time * 1000, penalty });
 test('record profiles agree with trimmed windows including DNFs and penalties', () => {
   const data = Array.from({length: 240}, (_, i) => solve(10 + (i * 37 % 119) / 10, i % 39 === 0 ? 'DNF' : i % 17 === 0 ? '+2' : ''));
@@ -111,4 +111,52 @@ test('inspection cue assets are complete and random selection avoids an immediat
   assert.notEqual(pickInspectionCue(8, 0, () => 0).index, 0);
   assert.notEqual(pickInspectionCue(12, 5, () => .5).index, 5);
   assert.equal(pickInspectionCue(9), null);
+});
+
+test('there are twelve levels, each with its own effect, and Sub 12 sits at level 7', () => {
+  assert.equal(SPECIAL.length, 12);
+  assert.equal(TITLE_EFFECT.length, 12);
+  assert.equal(tier(12), 7);
+  assert.equal(tier(5), 12);
+  assert.equal(tier(null), 0);
+  assert.deepEqual([...new Set(TITLE_EFFECT)], ['sunrise', 'aurora', 'warp', 'forge', 'singularity']);
+});
+test('every Animation Studio moment becomes a plan the engine knows how to play', () => {
+  const known = new Set(['ripple', 'accident', 'shatter', 'settle', 'prism', 'breach', 'seal', 'sunrise', 'aurora', 'warp', 'forge', 'singularity', 'oxidation', 'polish', 'thud']);
+  const expected = { single: 'shatter', average: 'settle', stack: 'prism', ordinary: 'ripple', 'barrier-down': 'breach', 'barrier-up': 'seal', worst: 'thud', accident: 'accident', recovery: 'polish' };
+  const ids = demoGroups().flatMap(g => g.options.map(o => o[0]));
+  assert.equal(ids.length, 9 + SPECIAL.length * 2);
+  for (const id of ids) {
+    const p = plan(demoEvent(id), () => 0);
+    assert.ok(known.has(p.id), id);
+    if (expected[id]) assert.equal(p.id, expected[id], id);
+    if (id.startsWith('sub-')) { assert.equal(p.id, TITLE_EFFECT[tier(Number(id.slice(4))) - 1]); assert.equal(p.card.tier, tier(Number(id.slice(4)))); }
+    if (id.startsWith('rust-')) { assert.equal(p.id, 'oxidation'); assert.equal(p.card.rusty, true); }
+  }
+});
+test('solves under 2.5 seconds never earn a reward, even with a record or a title', () => {
+  const event = { ...demoEvent('single'), time: MIN_REWARD_SOLVE - .01 };
+  const p = plan(event, () => 0);
+  assert.equal(p.id, 'accident');
+  assert.equal(p.card.skin, 'muted');
+  assert.equal(plan({ ...demoEvent('sub-5'), time: 1.2 }, () => 0).id, 'accident');
+  assert.notEqual(plan({ ...event, time: MIN_REWARD_SOLVE }, () => 0).id, 'accident');
+  assert.equal(plan({ records: [], time: 11 }, () => 0).id, 'ripple');
+});
+test('a single record shatters, several records combine, and card copy comes from the injected rng', () => {
+  const rec = (label, value, improvement) => ({ label, value, improvement, window: [] });
+  assert.equal(plan({ records: [rec('Single PB', 9, .5)], time: 9 }, () => 0).id, 'shatter');
+  assert.equal(plan({ records: [rec('Single PB', 9, .5), rec('ao5 PB', 10, .2)], time: 9 }, () => 0).id, 'prism');
+  const a = plan(demoEvent('worst'), () => 0).card.title, b = plan(demoEvent('worst'), () => .999).card.title;
+  assert.notEqual(a, b);
+});
+
+test('every level wears its own card design, in the agreed order', () => {
+  require('../assets/rank-cards.js');
+  const { frame, FRAME } = globalThis.CTRank;
+  assert.equal(FRAME.length, SPECIAL.length + 1);
+  assert.equal(new Set(FRAME).size, FRAME.length);
+  assert.deepEqual(SPECIAL.map((_, i) => frame(i + 1)), [2, 1, 3, 4, 8, 10, 7, 9, 6, 5, 11, 12]); // Breeze, Horizon, Bronze, Steel, Gold, Crystal, Obsidian, Forge, Neon, Aurora, Holographic, Supernova
+  assert.equal(frame(0), 0);
+  assert.equal(frame(tier(12)), 7); // Sub 12 is still obsidian
 });

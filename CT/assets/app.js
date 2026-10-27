@@ -4,6 +4,8 @@
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)],
     C = CT;
+  // Rank-card materials are decoration: without them (or without WebGL) the cards fall back to plain CSS.
+  const Rank = typeof CTRank !== "undefined" ? CTRank : { layers: () => "", frame: level => level, mount() {}, unmount() {} };
   const paths = {
     cube: "m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5M12 12v9",
     grid: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
@@ -19,11 +21,14 @@
     help: "M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4m.1 3h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",
     "arrow-up-right": "M6 18 18 6M6 6h12v12",
     arrow: "M4 12h16m-6-6 6 6-6 6",
+    "trend-up": "m3 17 6-6 4 4 8-8M15 7h6v6",
+    "trend-down": "m3 7 6 6 4-4 8 8M15 17h6v-6",
     chevron: "m9 5 7 7-7 7",
     left: "m15 5-7 7 7 7",
     down: "m5 9 7 7 7-7",
     reset: "M3 11a9 9 0 1 1 2 7M3 4v7h7",
     copy: "M9 9h12v12H9zM15 9V3H3v12h6",
+    note: "M5 5h14v10l-5 5H5zM14 20v-5h5",
     close: "m6 6 12 12M6 18 18 6",
     search: "M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
     trophy:
@@ -190,14 +195,14 @@
     Object.entries(window.CT_ENVIRONMENTS.ENVIRONMENTS)
       .map(([id, { label, detail }]) => [id, { label, detail }]));
   const LIGHTING_CONTROLS = {
-    exposure: { label: "Brightness", detail: "Camera exposure", min: .3, max: 1.6, step: .01 },
-    hemi: { label: "Ambient", detail: "Overall shadow lift", min: 0, max: 2.5, step: .01 },
-    key: { label: "Key light", detail: "Main warm light", min: 0, max: 4, step: .01 },
-    rim: { label: "Rim light", detail: "Cool edge separation", min: 0, max: 3, step: .01 },
-    fill: { label: "Fill light", detail: "Opens the dark side", min: 0, max: 3, step: .01 },
-    env: { label: "Reflections", detail: "HDR environment strength", min: 0, max: 2.5, step: .01 },
-    gloss: { label: "Clearcoat", detail: "Top-layer reflection", min: 0, max: 1, step: .01 },
-    glossRough: { label: "Highlight spread", detail: "Soft to sharp reflections", min: .03, max: .5, step: .005 },
+    exposure: { label: "Brightness", detail: "Camera exposure", group: "Lights", min: .3, max: 1.6, step: .01 },
+    hemi: { label: "Ambient", detail: "Overall shadow lift", group: "Lights", min: 0, max: 2.5, step: .01 },
+    key: { label: "Key light", detail: "Main warm light", group: "Lights", min: 0, max: 4, step: .01 },
+    rim: { label: "Rim light", detail: "Cool edge separation", group: "Lights", min: 0, max: 3, step: .01 },
+    fill: { label: "Fill light", detail: "Opens the dark side", group: "Lights", min: 0, max: 3, step: .01 },
+    env: { label: "Reflections", detail: "HDR environment strength", group: "Material", min: 0, max: 2.5, step: .01 },
+    gloss: { label: "Clearcoat", detail: "Top-layer reflection", group: "Material", min: 0, max: 1, step: .01 },
+    glossRough: { label: "Highlight spread", detail: "Soft to sharp reflections", group: "Material", min: .03, max: .5, step: .005 },
   };
 
   let pref = {
@@ -208,7 +213,7 @@
       timerMeanRange: "all",
       trend: "ao12",
       range: 1000,
-      insightsRange: "all",
+      insightsRange: 1000,
       active: null,
       theme: "system",
       accent: "forest",
@@ -218,9 +223,13 @@
       cubeQuality: "auto",
       cubeEnvironment: "studio",
       cubeWear: false,
+      cubeFloorShadow: true,
       cubeCore: "black",
       cubeCross: "D",
       scrambleAnimation: true,
+      rewardAnimations: true,
+      libraryGroup: true,
+      libraryT: null,
       pressToStart: false,
       mouseClickStart: true,
       videoRecording: false,
@@ -248,11 +257,10 @@
     panelIdleHandle = 0,
     recovery = null,
     demo = null,
-    query = "",
-    sort = "newest",
-    filter = "all",
-    startDate = "",
-    endDate = "",
+    libraryUI = null,        // the solve library's filters, sort and grouping (CTLibrary.defaultState)
+    libraryCtl = null,       // the mounted library component, null on every other screen
+    insightsCtl = null,      // the mounted insights component, null on every other screen
+    insightsSeen = false,    // charts draw in once per visit to the Insights screen, not on every re-render
     scene = null,
     drawerScene = null,
     appearanceScene = null,
@@ -263,14 +271,13 @@
     lightingScene = null,
     lightingState = null,
     lightingReturnView = "timer",
+    lightingTab = "light",
     drawerId = null,
     averageDrawer = null,
     latestId = null,
     panelObserver = null,
-    libraryObserver = null,
     sceneIdleHandle = 0,
     panelCount = 0,
-    libraryCount = 0,
     trainerSelection = new Set(),
     trainerThumbs = [],
     trainerObserver = null,
@@ -285,7 +292,6 @@
     training = null,
     keepPanel = false;
   const PANEL_BATCH = 60;
-  const LIBRARY_BATCH = 60;
   const VIDEO_RESOLUTIONS = {
     480: { label: "480p", width: 854, height: 480, bitrate: 850000 },
     720: { label: "720p", width: 1280, height: 720, bitrate: 1500000 },
@@ -335,6 +341,12 @@
     pref.window = 1000;
     pref.version = 2;
   }
+  if (!pref.insightsRangeV1) {
+    // Insights used to start from every solve, with its own window setting. Now the range is the only
+    // control, and recent form is the useful default. A range chosen on purpose is left alone.
+    if (pref.insightsRange === "all") pref.insightsRange = 1000;
+    pref.insightsRangeV1 = true;
+  }
   pref.window = Math.max(
     5,
     Math.min(10000, Math.round(Number(pref.window) || 1000)),
@@ -351,6 +363,7 @@
   if (!Object.hasOwn(CUBE_MODELS, pref.cubeFinish)) pref.cubeFinish = "standard";
   if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "studio";
   if (typeof pref.cubeWear !== "boolean") pref.cubeWear = false;
+  if (typeof pref.cubeFloorShadow !== "boolean") pref.cubeFloorShadow = true;
   if (!Object.hasOwn(CUBE_CORES, pref.cubeCore)) pref.cubeCore = "black";
   if (!Object.hasOwn(CUBE_CROSSES, pref.cubeCross)) pref.cubeCross = "D";
   // A first guess, not a verdict. Machines that advertise little get the safe
@@ -358,6 +371,9 @@
   if (!Object.hasOwn(CUBE_QUALITY, pref.cubeQuality))
     pref.cubeQuality = matchMedia("(pointer: coarse)").matches || (navigator.hardwareConcurrency || 4) <= 4 ? "low" : "balanced";
   if (typeof pref.scrambleAnimation !== "boolean") pref.scrambleAnimation = true;
+  if (typeof pref.rewardAnimations !== "boolean") pref.rewardAnimations = true;
+  if (typeof pref.libraryGroup !== "boolean") pref.libraryGroup = true;
+  if (!(Number(pref.libraryT) > 0)) pref.libraryT = null;
   if (typeof pref.mouseClickStart !== "boolean") pref.mouseClickStart = true;
   if (typeof pref.videoRecording !== "boolean") pref.videoRecording = false;
   if (typeof pref.videoRecordInspection !== "boolean") pref.videoRecordInspection = true;
@@ -405,14 +421,24 @@
     $$('[data-theme-choice]').forEach((choice) =>
       choice.classList.toggle("active", choice.dataset.themeChoice === pref.theme),
     );
-    $$('[data-accent-choice]').forEach((choice) =>
-      choice.classList.toggle("active", choice.dataset.accentChoice === pref.accent),
-    );
+    $$('[data-accent-choice]').forEach((choice) => {
+      const active = choice.dataset.accentChoice === pref.accent;
+      choice.classList.toggle("active", active);
+      if (active) $$("[data-accent-name]").forEach((name) => (name.textContent = choice.getAttribute("aria-label")));
+    });
   }
   darkQuery.addEventListener?.("change", () => {
     if (pref.theme === "system") applyTheme();
   });
   applyTheme();
+  // One switch for every reward: effects, the rank cards' moving materials and the title label.
+  // Off by choice (Settings) or because the device asks for reduced motion.
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  function applyRewardMotion() {
+    document.documentElement.dataset.rewardMotion = pref.rewardAnimations && !reducedMotion.matches ? "on" : "off";
+  }
+  reducedMotion.addEventListener?.("change", applyRewardMotion);
+  applyRewardMotion();
   function savePref() {
     try {
       localStorage.setItem(PREF, JSON.stringify(pref));
@@ -772,16 +798,17 @@
     storageStatus();
   }
   function categorySelect() {
-    return `<select class="mobile-category" aria-label="Active category" data-control="category">${demo ? "<option>Demo dataset</option>" : ""}${state.categories.map((c) => `<option value="${esc(c.id)}" ${c.id === active()?.id ? "selected" : ""}>${esc(c.name)}</option>`).join("") || "<option>No category</option>"}<option value="__new__">+ New category…</option></select>`;
+    return `<select class="mobile-category" data-native aria-label="Active category" data-control="category">${demo ? "<option>Demo dataset</option>" : ""}${state.categories.map((c) => `<option value="${esc(c.id)}" ${c.id === active()?.id ? "selected" : ""}>${esc(c.name)}</option>`).join("") || "<option>No category</option>"}<option value="__new__">+ New category…</option></select>`;
   }
   function rangeSelect() {
     const r = String(currentRange()),
       counts =
         view === "insights" ? [50, 100, 500, 1000, 10000] : [50, 100, 500, 1000];
-    return `<select class="period-select" aria-label="Solve range" data-control="range"><option value="all" ${r === "all" ? "selected" : ""}>All solves</option>${counts.map((n) => `<option value="${n}" ${r === String(n) ? "selected" : ""}>Last ${n.toLocaleString()} solves</option>`).join("")}</select>`;
+    return `<select class="period-select" data-dd="compact" aria-label="Solve range" data-control="range"><option value="all" ${r === "all" ? "selected" : ""}>All solves</option>${counts.map((n) => `<option value="${n}" ${r === String(n) ? "selected" : ""}>Last ${n.toLocaleString()} solves</option>`).join("")}</select>`;
   }
-  function heading(title, actions = "") {
-    return `<div class="page-heading"><h1>${title}</h1><div class="heading-actions">${categorySelect()}${actions}</div></div>`;
+  /* categories = false drops the category dropdown on screens that don't need it: the sidebar already switches category. */
+  function heading(title, actions = "", categories = true) {
+    return `<div class="page-heading"><h1>${title}</h1><div class="heading-actions">${categories ? categorySelect() : ""}${actions}</div></div>`;
   }
   function banners() {
     return (
@@ -820,17 +847,21 @@
       ao5 = bestAverage(solves(), 5),
       days = new Set(a.filter((x) => x.date).map((x) => localDay(dated(x))))
         .size;
+    const stat = (value, label, hint, cls = "") =>
+      `<div class="ov-stat${cls}"><span class="ov-label">${label}</span><b>${value}</b><small>${hint || ""}</small></div>`;
     return `<div class="metric-grid">
 ${rankCard(status)}
-<div class="metric"><div class="metric-label">Global ao5 PB ${icon("chart")}</div><div class="metric-value">${fmt(ao5)}${Number.isFinite(ao5) ? '<span class="unit">s</span>' : ""}</div><div class="metric-foot">All solves · trimmed average</div></div>
-<div class="metric"><div class="metric-label">Session mean ${icon("target")}</div><div class="metric-value">${fmt(s.mean)}${Number.isFinite(s.mean) ? '<span class="unit">s</span>' : ""}</div><div class="metric-foot">${s.valid.toLocaleString()} completed · ${s.dnf} DNF</div></div>
-<div class="metric"><div class="metric-label">Total solves ${icon("cube")}</div><div class="metric-value">${s.count.toLocaleString()}</div><div class="metric-foot"><strong>${days} day${days === 1 ? "" : "s"}</strong></div></div></div>`;
+<div class="ov-stats">${stat(`${fmt(ao5)}${Number.isFinite(ao5) ? "<i>s</i>" : ""}`, "Global ao5 PB", "All solves · trimmed average", " best")}${stat(`${fmt(s.mean)}${Number.isFinite(s.mean) ? "<i>s</i>" : ""}`, "Session mean", `${s.valid.toLocaleString()} completed · ${s.dnf} DNF`)}${stat(s.count.toLocaleString(), "Total solves", `${days} day${days === 1 ? "" : "s"}`)}</div></div>`;
   }
+  // The Overview card and the studio's preview. Materials come from rank-cards.css / rank-cards.js;
+  // tier 0 (not ranked yet) shows a socket whose ring of 500 ticks fills as you solve.
   function rankCard(status) {
     const s = status ? { ...status } : { count: solves().length, ready: false, best: Infinity, tier: 0 };
-    const title = s.threshold ? `${s.rusty ? "Rusty sub" : "Sub"} ${CTEffects.timeLabel(s.threshold)}` : s.ready ? "Building your title" : `${Math.min(s.count, 500)} / 500 solves`;
-    if (!s.ready) s.best = null;
-    return `<div class="metric rank-card${s.rusty ? " is-rusty" : ""}" data-tier="${s.tier}" style="--reward-power:${s.tier}"><div class="metric-label">${s.rusty ? "A little oxidation" : "Best 500 · lifetime"} ${icon("trophy")}</div><div class="rank-title">${title}</div><div class="metric-value">${fmt(s.best)}${Number.isFinite(s.best) ? '<span class="unit">s</span>' : ""}</div><div class="metric-foot">${s.ready ? `Current 500 · ${fmt(s.current)}${s.rusty ? " · Shake off the rust" : " · This category"}` : "Your title starts at 500 attempts"}</div></div>`;
+    const building = !s.ready, title = s.threshold ? `${s.rusty ? "Rusty sub" : "Sub"} ${CTEffects.timeLabel(s.threshold)}` : "Building your title";
+    const value = building ? `${Math.min(s.count, 500)}<span class="unit">/ 500</span>` : `${fmt(s.best)}${Number.isFinite(s.best) ? '<span class="unit">s</span>' : ""}`;
+    const foot = building ? `${500 - Math.min(s.count, 500)} solves to your first title` : `Current 500 · ${fmt(s.current)}${s.rusty ? " · Shake off the rust" : s.threshold ? " · This category" : ""}`;
+    const frame = Rank.frame(s.tier);
+    return `<div class="metric rank-card${s.rusty ? " is-rusty" : ""}" data-tier="${frame}" style="--p:${building ? Math.min(s.count, 500) / 500 : 1}">${Rank.layers(frame)}<div class="metric-label"><span>${s.rusty ? "A little oxidation" : "Best 500 · lifetime"}</span>${icon("trophy")}</div><div class="rank-title">${title}</div><div class="metric-value">${value}</div><div class="metric-foot">${foot}</div></div>`;
   }
   function chart(data, kind = "trend", height = 211) {
     if (!data.length)
@@ -1114,10 +1145,10 @@ ${rankCard(status)}
     return `<div class="panel-stats">${[
       ["best", fmt(best), "All-time single", best != null],
       ["mean", fmt(mean), range === "all" ? "Global · change" : `Last ${Number(range).toLocaleString()} · change`, true],
-      ["ao5", fmt(ao5), `PB · ${fmt(ao5PB)}`, data.length >= 5],
-      ["ao12", fmt(ao12), `PB · ${fmt(ao12PB)}`, data.length >= 12],
+      ["ao5", fmt(ao5), `PB · ${fmt(ao5PB)}`, data.length >= 5, fmt(ao5PB)],
+      ["ao12", fmt(ao12), `PB · ${fmt(ao12PB)}`, data.length >= 12, fmt(ao12PB)],
     ]
-      .map(([k, v, hint, enabled]) => `<button class="stat-button" data-stat="${k}" ${enabled ? "" : "disabled"} aria-label="${k}: ${v}. ${hint}"><span>${k}${icon("arrow-up-right")}</span><strong>${v}</strong><small>${hint}</small></button>`)
+      .map(([k, v, hint, enabled, pb]) => `<button class="stat-button" data-stat="${k}" ${enabled ? "" : "disabled"} title="${hint}" aria-label="${k}: ${v}. ${hint}"><strong>${v}</strong><small>${k}${pb ? ` <em>PB ${pb}</em>` : ""}</small></button>`)
       .join("")}</div>`;
   }
   function solveBadges(s) {
@@ -1306,134 +1337,91 @@ ${rankCard(status)}
   function resultControls(s) {
     return `<button class="penalty-btn ${s.penalty === "" ? "active" : ""}" data-penalty="" data-id="${esc(s.id)}">OK</button><button class="penalty-btn ${s.penalty === "+2" ? "active" : ""}" data-penalty="+2" data-id="${esc(s.id)}">+2</button><button class="penalty-btn ${s.penalty === "DNF" ? "active" : ""}" data-penalty="DNF" data-id="${esc(s.id)}">DNF</button><button class="icon-btn" data-delete="${esc(s.id)}" aria-label="Delete last solve">${icon("trash")}</button>`;
   }
-  function filtered() {
-    let a = solves().filter(
-      (s) =>
-        (!query ||
-          `${fmt(C.value(s))} ${s.scramble} ${s.note || ""} ${s.originalDate || s.date || ""}`
-            .toLowerCase()
-            .includes(query.toLowerCase())) &&
-        (filter === "all" ||
-          (filter === "dnf" && s.penalty === "DNF") ||
-          (filter === "sub" && C.value(s) < pref.target)) &&
-        (!startDate || (s.date && localDay(dated(s)) >= startDate)) &&
-        (!endDate || (s.date && localDay(dated(s)) <= endDate)),
-    );
-    if (sort === "fastest") a.sort((a, b) => C.value(a) - C.value(b));
-    else if (sort === "newest") a.reverse();
-    return a;
+  // ---- Solve library: the component lives in assets/library.js; this is its glue to the app. ----
+  function libraryState() {
+    if (!libraryUI) libraryUI = CTLibrary.defaultState({ group: pref.libraryGroup, T: pref.libraryT ?? pref.target });
+    return libraryUI;
   }
-  function tableRowsHTML(data, full = true) {
-    return data
-      .map((s) => {
-        const idx = solves().indexOf(s);
-        const flag = s.invalidScramble
-          ? `<i class="solve-warn-badge" title="Scramble not valid for records">${icon("warning")}</i>`
-          : "";
-        return `<tr data-solve="${esc(s.id)}"${s.invalidScramble ? ' class="is-flagged"' : ""} tabindex="0" aria-label="Open solve ${idx + 1}${solveFlagNote(s)}"><td>#${idx + 1}</td><td class="time-cell">${fmt(C.value(s))}${s.penalty === "+2" ? "<small>+</small>" : ""}</td><td>${full ? fmt(C.average(solves().slice(Math.max(0, idx - 4), idx + 1), 5)) : s.penalty || "OK"}</td><td class="scramble-cell" data-copyable title="${esc(s.scramble)}">${flag}${esc(s.scramble || "No scramble recorded")}</td><td>${esc(longDate(s))}</td></tr>`;
-      })
-      .join("");
+  function resetLibrary() {
+    libraryUI = CTLibrary.defaultState({ group: pref.libraryGroup, T: pref.libraryT ?? pref.target });   // callers repaint the screen next
   }
-  function tableHTML(data, full = true) {
-    if (!data.length)
-      return empty("No solves yet", "Recorded solves appear here.");
-    return `<div class="table-scroll"><table><thead><tr><th>Solve</th><th>Time</th><th>${full ? "ao5" : "Status"}</th><th>Scramble</th><th>Recorded</th></tr></thead><tbody>${tableRowsHTML(data, full)}</tbody></table></div>`;
+  function libraryContext() {
+    return {
+      state: libraryState(),
+      solves,
+      value: C.value,
+      format: fmt,
+      average: C.average,
+      dateOf: dated,
+      stats: () => C.stats(solves()),
+      esc,
+      icon,
+      badges: solveBadges,
+      open: openSolve,
+      setPenalty: penalty,
+      remove: requestDeleteSolve,
+      copy: (text) => copyText(text),
+      reduced: () => reducedMotion.matches,
+      persist: () => {
+        pref.libraryGroup = libraryUI.group;
+        pref.libraryT = libraryUI.T;
+        savePref();
+      },
+    };
+  }
+  /* What the library is showing right now, for export. */
+  function libraryItems() {
+    return libraryCtl ? libraryCtl.results() : CTLibrary.select(solves(), libraryState(), libraryContext());
+  }
+  /* After a change to the solves: repaint the library in place if it is the screen you are on. */
+  function refreshView() {
+    if (view === "solves" && libraryCtl) libraryCtl.refresh();
+    else render();
   }
   function library() {
-    const a = filtered(),
-      s = C.stats(solves());
-    libraryCount = Math.max(LIBRARY_BATCH, Math.min(libraryCount, a.length));
-    const shown = Math.min(libraryCount, a.length);
     return (
       heading(
         "Solve library",
         `<button class="btn btn-quiet" data-action="manual">${icon("plus")}Manual entry</button><button class="btn btn-quiet" data-action="manage">${icon("folder")}Manage</button><button class="btn btn-dark" data-action="export">${icon("download")}Export CSV</button>`,
       ) +
-      `<div class="stat-strip"><span><strong>${s.count.toLocaleString()}</strong> solves</span><span>Best <strong>${fmt(s.best)}</strong></span><span>Mean <strong>${fmt(s.mean)}</strong></span><span><strong>${s.dnf}</strong> DNF</span><span class="chip">${esc(active()?.file || "Index, Time, Scramble, Date")}</span></div><section class="panel"><div class="table-tools"><div class="search-wrap">${icon("search")}<input type="search" id="solve-search" placeholder="Search time, scramble, or note…" value="${esc(query)}" aria-label="Search solves"></div><div class="table-actions"><select class="period-select" data-control="filter" aria-label="Filter solves">${[
-        ["all", "All results"],
-        ["sub", `Sub-${pref.target}`],
-        ["dnf", "DNF only"],
-      ]
-        .map(
-          ([v, t]) =>
-            `<option value="${v}" ${filter === v ? "selected" : ""}>${t}</option>`,
-        )
-        .join(
-          "",
-        )}</select><select class="period-select" data-control="sort" aria-label="Sort solves">${[
-        ["newest", "Newest first"],
-        ["oldest", "Oldest first"],
-        ["fastest", "Fastest first"],
-      ]
-        .map(
-          ([v, t]) =>
-            `<option value="${v}" ${sort === v ? "selected" : ""}>${t}</option>`,
-        )
-        .join(
-          "",
-        )}</select></div></div><div class="table-tools" style="padding-top:12px;padding-bottom:12px"><div class="chart-range"><label>From <input type="date" data-control="start-date" value="${esc(startDate)}"></label><label>To <input type="date" data-control="end-date" value="${esc(endDate)}"></label></div><button class="btn-link" data-action="clear-filter">Reset filters</button></div><div id="library-results">${a.length ? tableHTML(a.slice(0, shown)) : solves().length ? '<div class="empty-state"><strong>No matching solves</strong>Try a different search, or reset the filters.</div>' : empty()}<div class="library-progress"><span id="library-count">${a.length ? `Showing ${shown.toLocaleString()} of ${a.length.toLocaleString()} solves` : "0 solves"}</span><div class="library-sentinel" id="library-sentinel"${shown >= a.length ? " hidden" : ""} aria-hidden="true"></div></div></div></section><p class="range-note">Export uses the current filters, in chronological order.</p>`
+      (solves().length
+        ? `<div id="library-host"></div><p class="range-note">Export uses the current filters, in chronological order.</p>`
+        : empty())
     );
   }
   function bindLibrary() {
-    const sentinel = $("#library-sentinel"), tbody = $("#library-results tbody");
-    if (!sentinel || !tbody || typeof IntersectionObserver === "undefined" || libraryCount >= filtered().length)
-      return;
-    const grow = () => {
-      const data = filtered(), total = data.length;
-      if (libraryCount < total) {
-        const next = Math.min(total, libraryCount + LIBRARY_BATCH);
-        tbody.insertAdjacentHTML("beforeend", tableRowsHTML(data.slice(libraryCount, next)));
-        libraryCount = next;
-        $("#library-count").textContent = `Showing ${libraryCount.toLocaleString()} of ${total.toLocaleString()} solves`;
-      }
-      if (libraryCount >= total) {
-        sentinel.hidden = true;
-        libraryObserver?.disconnect();
-        libraryObserver = null;
-      } else {
-        libraryObserver.unobserve(sentinel);
-        libraryObserver.observe(sentinel);
-      }
+    const host = $("#library-host");
+    if (host) libraryCtl = CTLibrary.create(host, libraryContext());
+  }
+  const bestAverage = (a, n) => CTInsights.bestAverage(a, n, C.average);
+  /* What the Insights component needs from the app (see the header of insights.js). */
+  function insightsContext() {
+    return {
+      animate: !insightsSeen,
+      data: rangeSolves,
+      target: () => pref.target,
+      value: C.value,
+      format: fmt,
+      average: C.average,
+      subSeries: C.subSeries,
+      stats: C.stats,
+      dateOf: dated,
+      dayLabel: shortDate,
+      number: (s) => solves().indexOf(s) + 1,
+      esc,
+      icon,
+      open: openSolve,
+      reduced: () => reducedMotion.matches,
     };
-    libraryObserver = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) grow();
-      },
-      { rootMargin: "700px 0px" },
-    );
-    libraryObserver.observe(sentinel);
-  }
-  function histogram(a) {
-    const vals = a.map(C.value).filter(Number.isFinite);
-    if (!vals.length)
-      return '<div class="empty-chart"><strong>No completed solves</strong></div>';
-    const min = vals.reduce((a, b) => Math.min(a, b), Infinity),
-      max = vals.reduce((a, b) => Math.max(a, b), -Infinity),
-      size = (max - min || 1) / 12,
-      bins = Array(12).fill(0);
-    for (const v of vals) bins[Math.min(11, Math.floor((v - min) / size))]++;
-    const top = Math.max(...bins);
-    return `<div class="histogram">${bins.map((count, i) => `<div class="hist-bin" title="${fmt(min + i * size)}–${fmt(min + (i + 1) * size)}s: ${count} solves"><div style="height:${(count / top) * 100}%"></div></div>`).join("")}</div><div class="hist-labels"><span>${fmt(min)}s</span><span>Finish time</span><span>${fmt(max)}s</span></div>`;
-  }
-  function bestAverage(a, n) {
-    let best = null;
-    for (let i = n - 1; i < a.length; i++) {
-      const v = C.average(a.slice(i - n + 1, i + 1), n);
-      if (best == null || v < best) best = v;
-    }
-    return best;
   }
   function insights() {
-    const a = rangeSolves(),
-      s = C.stats(a),
-      groups = Array.from({ length: 7 }, () => []);
-    for (const solve of a)
-      if (solve.date) groups[(dated(solve).getDay() + 6) % 7].push(solve);
-    const top = Math.max(1, ...groups.map((g) => g.length));
-    return (
-      heading("Insights", rangeSelect()) +
-      `<div class="insights-grid">${goalPanel(a, true)}<section class="panel panel-pad"><div class="panel-heading"><div><h2>Distribution</h2><p>Completed solves only</p></div><span class="chip">${s.valid} solves</span></div>${histogram(a)}<div class="insight-facts"><div><span>Median</span><strong>${fmt(s.median)}</strong></div><div><span>Std. deviation</span><strong>${fmt(s.sd)}</strong></div><div><span>Completion</span><strong>${a.length ? ((s.valid / a.length) * 100).toFixed(1) + "%" : "—"}</strong></div></div></section><section class="panel panel-pad"><div class="panel-heading"><div><h2>Personal best over time</h2></div>${icon("trophy")}</div>${chart(a, "pb", 220)}<div class="chart-caption"><span>Best single</span><strong>${fmt(s.best)}${s.best != null ? " seconds" : ""}</strong></div></section><section class="panel panel-pad"><div class="panel-heading"><div><h2>Solves by weekday</h2></div>${icon("calendar")}</div><div class="bar-list">${groups.map((g, i) => `<div class="bar-row"><span>${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i]}</span><div class="bar-track"><div style="width:${(g.length / top) * 100}%"></div></div><strong>${g.length}</strong></div>`).join("")}</div><p class="chart-note">Local dates. Solves without a date are excluded.</p></section><section class="panel panel-pad"><div class="panel-heading"><div><h2>Best averages</h2></div>${icon("target")}</div><table style="margin-top:17px"><thead><tr><th style="padding-left:0">Window</th><th>Current</th><th>Best in range</th></tr></thead><tbody>${[5, 12, 100].map((n) => `<tr><td style="padding-left:0">ao${n}</td><td class="time-cell">${fmt(C.average(a, n))}</td><td class="time-cell">${fmt(bestAverage(a, n))}</td></tr>`).join("")}</tbody></table><div class="quality-note">Averages trim the fastest and slowest 5%, rounded up. DNFs stay in the window.</div></section></div>${activity(solves(), 26)}`
-    );
+    return heading("Insights", rangeSelect(), false) + `<div id="insights-host"></div>`;
+  }
+  function bindInsights() {
+    const host = $("#insights-host");
+    if (!host) return;
+    insightsCtl = CTInsights.create(host, insightsContext());
+    insightsSeen = true;
   }
   // ---------------------------------------------------------------- Trainer
   // A case is whatever its algorithm solves: the cube on a card is the solved
@@ -1785,7 +1773,7 @@ ${rankCard(status)}
       return;
     }
     try {
-      if (!cubeStudio) cubeStudio = await import("./cube-realistic.js");
+      await loadCubeStudio();
     } catch {
       previewFailed = true;
       mount._caseThumb = null;
@@ -1839,38 +1827,46 @@ ${rankCard(status)}
         );
   function trainerHeading(set) {
     const sets = algSets(),
-      selector = `<select class="period-select" aria-label="Algorithm set" data-control="alg-set">${sets
+      selector = `<select class="period-select" data-dd="compact" aria-label="Algorithm set" data-control="alg-set">${sets
         .map(
           (s) =>
             `<option value="${esc(s.id)}"${s.id === set?.id ? " selected" : ""}>${esc(s.name)}</option>`,
         )
-        .join("")}<option value="__new__">+ New alg set…</option></select>`,
-      modes = `<div class="segmented" role="group" aria-label="Case preview">${[
-        ["3d", "3D"],
-        ["top", "Top"],
-      ]
-        .map(
-          ([id, label]) =>
-            `<button class="${pref.trainerView === id ? "active" : ""}" data-trainer-view="${id}" aria-pressed="${pref.trainerView === id}">${label}</button>`,
-        )
-        .join("")}</div>`;
-    return `<div class="page-heading"><h1>Trainer</h1><div class="heading-actions">${set ? `<button class="btn btn-quiet" data-action="new-group">${icon("plus")}New group</button><button class="btn btn-quiet" data-action="new-case" data-group="">${icon("plus")}New case</button>` : ""}${selector}${set ? modes + `<button class="icon-btn" data-action="manage-set" aria-label="Manage this set" title="Manage this set">${icon("more")}</button>` : ""}</div></div>`;
+        .join("")}<option value="__new__">+ New alg set…</option></select>`;
+    return `<div class="page-heading"><h1>Trainer</h1><div class="heading-actions">${selector}${set ? `<button class="icon-btn tool-btn" data-action="manage-set" aria-label="Manage this set" title="Manage this set">${icon("more")}</button>` : ""}</div></div>`;
+  }
+  // Same summary strip as the Solve library: big numbers, small labels.
+  function trainerSummary(set) {
+    const modes = `<div class="segmented" role="group" aria-label="Case preview">${[
+      ["3d", "3D"],
+      ["top", "Top"],
+    ]
+      .map(
+        ([id, label]) =>
+          `<button class="${pref.trainerView === id ? "active" : ""}" data-trainer-view="${id}" aria-pressed="${pref.trainerView === id}">${label}</button>`,
+      )
+      .join("")}</div>`;
+    return `<div class="lib-summary trainer-summary"><div class="lib-stat"><b>${set.cases.length}</b><span>${set.cases.length === 1 ? "case" : "cases"}</span></div><div class="lib-stat"><b>${set.groups.length}</b><span>${set.groups.length === 1 ? "group" : "groups"}</span></div><div class="lib-stat best" id="trainer-picked"><b>${trainerSelection.size}</b><span>selected</span></div><div class="trainer-tools">${modes}${selectAllButton(set)}</div></div>`;
+  }
+  const allPicked = (set) => Boolean(set?.cases.length) && set.cases.every((entry) => trainerSelection.has(entry.id));
+  function selectAllButton(set) {
+    const all = allPicked(set);
+    return `<button class="btn btn-quiet tool-btn" id="trainer-select" data-action="${all ? "clear-selection" : "select-all"}"${set?.cases.length ? "" : " disabled"}>${icon("check")}${all ? "Clear selection" : "Select all"}</button>`;
   }
   function caseCard(entry) {
     const picked = trainerSelection.has(entry.id);
-    return `<article class="case-card${picked ? " picked" : ""}" data-case="${esc(entry.id)}"><label class="case-check"><input type="checkbox" data-case-check="${esc(entry.id)}"${picked ? " checked" : ""} aria-label="Select ${esc(entry.name)}"></label><button class="case-open" data-case-open="${esc(entry.id)}"><span class="case-name">${esc(entry.name)}</span><span class="case-cube" data-case-thumb="${esc(entry.id)}" data-mode="${pref.trainerView}"></span><span class="case-alg">${esc(favouriteAlg(entry).moves)}</span></button></article>`;
+    return `<article class="case-card${picked ? " picked" : ""}" data-case="${esc(entry.id)}"><label class="case-check"><input type="checkbox" data-case-check="${esc(entry.id)}"${picked ? " checked" : ""} aria-label="Select ${esc(entry.name)}">${checkMark()}</label><button class="case-open" data-case-open="${esc(entry.id)}"><span class="case-name">${esc(entry.name)}</span><span class="case-cube" data-case-thumb="${esc(entry.id)}" data-mode="${pref.trainerView}"></span><span class="case-alg">${esc(favouriteAlg(entry).moves)}</span></button></article>`;
   }
+  const checkMark = () => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5.5 12.5 4.2 4.2L18.5 8"/></svg>';
+  const addCaseCard = (groupId) =>
+    `<button class="case-add" data-action="new-case" data-group="${esc(groupId)}" aria-label="Add a case">${icon("plus")}<span>Add case</span></button>`;
   function caseGroup(group, cases) {
     const picked = cases.filter((entry) => trainerSelection.has(entry.id)).length;
-    return `<section class="case-group"><div class="case-group-head"><label class="case-check"><input type="checkbox" data-group-check="${esc(group.id)}"${cases.length && picked === cases.length ? " checked" : ""} aria-label="Select every case in ${esc(group.name)}"></label><h2>${esc(group.name)}</h2><span class="case-group-count">${cases.length}</span><button class="icon-btn case-group-add" data-action="new-case" data-group="${esc(group.id)}" aria-label="Add a case to ${esc(group.name)}" title="Add a case">${icon("plus")}</button></div>${cases.length ? `<div class="case-grid">${cases.map(caseCard).join("")}</div>` : '<p class="case-group-empty">No cases in this group yet.</p>'}</section>`;
+    return `<section class="case-group"><div class="case-group-head"><label class="case-check"><input type="checkbox" data-group-check="${esc(group.id)}"${cases.length && picked === cases.length ? " checked" : ""} aria-label="Select every case in ${esc(group.name)}">${checkMark()}</label><h2>${esc(group.name)}</h2><span class="case-group-count">${cases.length}</span></div><div class="case-grid">${cases.map(caseCard).join("")}${addCaseCard(group.id)}</div></section>`;
   }
   function trainBar() {
     const n = trainerSelection.size;
-    return `<div class="train-bar"${n < 2 ? " hidden" : ""}><span class="train-bar-count"><strong>${n}</strong> selected</span><button class="btn btn-quiet" data-action="clear-selection">Clear</button><button class="btn btn-dark" data-action="train">${icon("play")}Train</button></div>`;
-  }
-  function trainerTools() {
-    const set = activeSet();
-    return `<div class="case-tools"><button class="btn btn-quiet" data-action="select-all"${set?.cases.length ? "" : " disabled"}>${icon("check")}Select all</button></div>`;
+    return `<div class="train-bar"${n < 1 ? " hidden" : ""}><span class="train-bar-count"><strong>${n}</strong> selected</span><button class="btn btn-quiet" data-action="clear-selection">Clear</button><button class="btn btn-dark" data-action="train">${icon("play")}Train</button></div>`;
   }
   function trainer() {
     const set = activeSet();
@@ -1882,13 +1878,12 @@ ${rankCard(status)}
     const loose = groupCases(set, null),
       sections =
         set.groups.map((group) => caseGroup(group, groupCases(set, group.id))).join("") +
-        (loose.length ? caseGroup({ id: "", name: "Ungrouped" }, loose) : "");
+        (loose.length || !set.groups.length ? caseGroup({ id: "", name: set.groups.length ? "Ungrouped" : "Cases" }, loose) : "");
     return (
       trainerHeading(set) +
-      trainerTools() +
-      (set.groups.length || set.cases.length
-        ? sections
-        : `<div class="empty-state"><strong>${esc(set.name)} is empty</strong>Add a group, then add the cases you want to practise.</div>`) +
+      trainerSummary(set) +
+      sections +
+      `<button class="group-add" data-action="new-group">${icon("plus")}New group</button>` +
       trainBar()
     );
   }
@@ -1926,7 +1921,11 @@ ${rankCard(status)}
     const bar = $(".train-bar");
     if (!bar) return;
     $("strong", bar).textContent = trainerSelection.size;
-    bar.hidden = trainerSelection.size < 2;
+    bar.hidden = trainerSelection.size < 1;
+    const set = activeSet();
+    $("#trainer-picked b")?.replaceChildren(String(trainerSelection.size));
+    const toggle = $("#trainer-select");
+    if (toggle && set) toggle.outerHTML = selectAllButton(set);
   }
   function pickCase(id, on) {
     if (on) trainerSelection.add(id);
@@ -2004,7 +2003,7 @@ ${rankCard(status)}
       .join("");
     showDialog(
       esc(entry.name),
-      `<div class="case-layout"><div class="case-visual"><div id="case-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="Show the case">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="Play the algorithm">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="Show the solved cube">${icon("last")}</button></div><div id="scramble-notation" class="scramble-tokens"></div><label class="case-speed"><span>Speed</span><input type="range" min="20" max="240" step="10" value="${300 - pref.trainerSpeed}" data-control="trainer-speed" aria-label="Move speed"></label></div><div class="case-side">${caseStats(entry)}<div class="alg-list">${rows}</div><form class="alg-add" id="alg-add"><input name="moves" placeholder="Add an algorithm" autocomplete="off" spellcheck="false" maxlength="600" aria-label="Add an algorithm for this case"><button class="btn btn-quiet" type="submit">${icon("plus")}Add</button></form><p class="alg-error" id="alg-error" role="status"></p><div class="case-side-foot"><button class="icon-btn" data-action="manage-case" aria-label="Manage this case" title="Manage this case">${icon("more")}</button></div></div></div>`,
+      `<div class="case-layout"><div class="case-visual"><div id="case-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="Show the case">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="Play the algorithm">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="Show the solved cube">${icon("last")}</button></div><div id="scramble-notation" class="scramble-tokens"></div><label class="case-speed"><span>Speed</span><input type="range" min="20" max="240" step="10" value="${300 - pref.trainerSpeed}" data-control="trainer-speed" aria-label="Move speed"></label></div><div class="case-side">${caseStats(entry)}<div class="alg-list">${rows}</div><form class="alg-add" id="alg-add"><input name="moves" placeholder="Add an algorithm" autocomplete="off" spellcheck="false" maxlength="600" aria-label="Add an algorithm for this case"><button class="btn btn-quiet" type="submit">${icon("plus")}Add</button></form><p class="alg-error" id="alg-error" role="status"></p><div class="case-side-foot"><button class="icon-btn tool-btn" data-action="manage-case" aria-label="Manage this case" title="Manage this case">${icon("more")}</button></div></div></div>`,
       "case-dialog",
     );
     mountCaseCube(current.moves);
@@ -2265,15 +2264,15 @@ ${rankCard(status)}
     mode === "every" ? trainerSelection.size * count : count;
   function trainNote(mode, count) {
     const n = roundLength(mode, Math.max(1, count || 1));
-    return `${trainerSelection.size} cases · ${n} attempt${n === 1 ? "" : "s"}`;
+    return `${trainerSelection.size} case${trainerSelection.size === 1 ? "" : "s"} · ${n} attempt${n === 1 ? "" : "s"}`;
   }
   function openTrainDialog() {
-    if (trainerSelection.size < 2) return;
-    const mode = pref.trainerMode === "every" ? "every" : "random",
+    if (trainerSelection.size < 1) return;
+    const mode = pref.trainerMode === "every" && trainerSelection.size > 1 ? "every" : "random",
       count = mode === "every" ? 1 : pref.trainerReps;
     showDialog(
       "Train",
-      `<form id="train-form"><div class="train-config"><div class="segmented train-modes" role="group" aria-label="Round">${[
+      `<form id="train-form"><div class="train-config">${trainerSelection.size < 2 ? "" : `<div class="segmented train-modes" role="group" aria-label="Round">${[
         ["random", "Random draw"],
         ["every", "Every case"],
       ]
@@ -2281,7 +2280,7 @@ ${rankCard(status)}
           ([id, label]) =>
             `<button type="button" class="${mode === id ? "active" : ""}" data-train-mode="${id}" aria-pressed="${mode === id}">${label}</button>`,
         )
-        .join("")}</div><label class="field"><span id="train-count-label">${mode === "every" ? "Times per case" : "Attempts"}</span><input name="count" type="number" min="1" max="500" step="1" inputmode="numeric" value="${count}" required></label></div><p class="train-note" id="train-note">${trainNote(mode, count)}</p><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">${icon("play")}Start</button></div></form>`,
+        .join("")}</div>`}<label class="field"><span id="train-count-label">${mode === "every" ? "Times per case" : "Attempts"}</span><input name="count" type="number" min="1" max="500" step="1" inputmode="numeric" value="${count}" required></label></div><p class="train-note" id="train-note">${trainNote(mode, count)}</p><div class="dialog-actions"><button type="button" class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">${icon("play")}Start</button></div></form>`,
       "train-dialog",
     );
     const form = $("#train-form");
@@ -2359,7 +2358,7 @@ ${rankCard(status)}
       done = training?.results.length || 0,
       last = training?.results.at(-1);
     // No cube here on purpose: seeing the case would answer the question.
-    return `<div class="focus-stage timer-card training-stage" data-state="${timer.phase}"><div class="training-head"><span class="chip">${esc(activeSet()?.name || "Trainer")}</span><span class="training-progress" id="training-progress">${Math.min(done + 1, total)} / ${total}</span><button class="btn btn-quiet" data-action="end-round">End round ${icon("close")}</button></div><div class="focus-main"><div class="focus-time"><div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(training?.scramble || "")}</p></div><button class="timer-surface" id="timer-surface" aria-label="Timer. ${pref.pressToStart ? "Press to start, press again to stop." : "Hold space or press and hold here, then release to start."}"><span class="timer-state sr-only" id="timer-state" role="status">READY</span><span class="timer-digits" id="timer-digits">${last ? fmt(last.seconds) : "0.00"}</span></button></div></div><aside class="solve-panel training-panel"><h2>This round</h2><div class="round-list" id="training-list">${trainingRows()}</div></aside></div>`;
+    return `<div class="focus-stage timer-card training-stage" data-state="${timer.phase}"><div class="training-head"><span class="training-set">${esc(activeSet()?.name || "Trainer")}</span><span class="training-progress" id="training-progress">${Math.min(done + 1, total)} / ${total}</span><span class="training-meter" aria-hidden="true"><i id="training-meter-fill" style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></span><button class="btn btn-quiet tool-btn" data-action="end-round">End round ${icon("close")}</button></div><div class="focus-main"><div class="focus-time"><div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(training?.scramble || "")}</p></div><button class="timer-surface" id="timer-surface" aria-label="Timer. ${pref.pressToStart ? "Press to start, press again to stop." : "Hold space or press and hold here, then release to start."}"><span class="timer-state sr-only" id="timer-state" role="status">READY</span><span class="timer-digits" id="timer-digits">${last ? fmt(last.seconds) : "0.00"}</span></button></div></div><aside class="solve-panel training-panel"><h2>This round</h2><div class="round-list" id="training-list">${trainingRows()}</div></aside></div>`;
   }
   function refreshTrainingAttempt(last) {
     if (!$(".training-stage")) {
@@ -2369,6 +2368,7 @@ ${rankCard(status)}
     $("#timer-digits").textContent = fmt(last);
     $(".focus-scramble").textContent = training.scramble;
     $("#training-progress").textContent = `${Math.min(training.results.length + 1, training.queue.length)} / ${training.queue.length}`;
+    $("#training-meter-fill").style.width = `${Math.round((training.results.length / Math.max(1, training.queue.length)) * 100)}%`;
     $("#training-list").innerHTML = trainingRows();
     revealScramble();
   }
@@ -2429,8 +2429,11 @@ ${rankCard(status)}
     lightingScene = null;
     panelObserver?.disconnect();
     panelObserver = null;
-    libraryObserver?.disconnect();
-    libraryObserver = null;
+    libraryCtl?.destroy();
+    libraryCtl = null;
+    insightsCtl?.destroy();
+    insightsCtl = null;
+    if (view !== "insights") insightsSeen = false;
     trainerObserver?.disconnect();
     trainerObserver = null;
     trainerResizeObserver?.disconnect();
@@ -2438,6 +2441,7 @@ ${rankCard(status)}
     trainerThumbs.forEach(clearCaseThumb);
     trainerThumbs = [];
     releasePreview();
+    Rank.unmount($("#main"));
     $("#chart-tooltip").hidden = true;
     const focused = view === "timer" || view === "effects",
       inRound = view === "training",
@@ -2457,8 +2461,10 @@ ${rankCard(status)}
     document.body.classList.toggle("timer-view", focused || inRound);
     document.body.classList.toggle("lighting-mode", view === "lighting");
     document.body.classList.toggle("overview-view", view === "overview");
+    document.body.classList.toggle("trainer-view", view === "trainer");
     renderSidebar();
     renderIcons();
+    Rank.mount($("#main"));
     if ($("#cube-mount")) {
       scene = new CubeScene($("#cube-mount"), currentScramble);
       scene.onChange = updateNotation;
@@ -2481,6 +2487,7 @@ ${rankCard(status)}
           $("#timer-surface")?.focus({ preventScroll: true });
       });
     } else if (view === "solves") bindLibrary();
+    else if (view === "insights") bindInsights();
     else if (view === "trainer") bindTrainer();
     else if (inRound) {
       bindTimerSurface();
@@ -2508,17 +2515,17 @@ ${rankCard(status)}
   }
 
   function effectsDemoPage() {
-    return `<div class="focus-stage timer-card effects-demo"><div class="focus-main"><div class="demo-heading"><span class="chip">ANIMATION STUDIO</span><span>Preview only · no solves saved</span><button class="btn btn-quiet" data-action="exit-effects">Back to timer ${icon("arrow")}</button></div><div class="focus-row"><div id="cube-mount" class="focus-cube"></div><div class="focus-time"><div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(scramblePending ? "Preparing scramble…" : currentScramble)}</p></div><div class="timer-surface"><span class="timer-digits" id="timer-digits">9.98</span></div><p class="demo-caption">Same stage. Same effects. Try every level.</p></div></div></div><aside class="solve-panel demo-controls"><h2>The reward room</h2><p>From a hundredth shaved off to a barrier you thought was impossible.</p><label class="field">Choose a moment<select id="demo-effect" data-control="demo-effect"><optgroup label="Personal bests"><option value="pb-small">A small single PB</option><option value="pb-big">A huge single PB</option><option value="pb-stack">Four records at once</option></optgroup><optgroup label="Everyday progress"><option value="regular">An ordinary half-second drop</option><option value="rise">An interval rise</option></optgroup><optgroup label="Title unlocked">${CTEffects.SPECIAL.map(n => `<option value="sub-${n}" ${demoEffect === `sub-${n}` ? "selected" : ""}>Sub ${CTEffects.timeLabel(n)} · level ${CTEffects.tier(n)}</option>`).join("")}</optgroup><optgroup label="Rust & recovery">${CTEffects.SPECIAL.map(n => `<option value="rust-${n}">Rusty sub ${CTEffects.timeLabel(n)}</option>`).join("")}<option value="recovery">Shake off the rust</option></optgroup><optgroup label="Timer motion"><option value="inspection">Inspection: final seconds</option><option value="entrance">Scramble & cube entrance</option></optgroup></select></label><button class="btn btn-dark" data-action="play-effect">${icon("play")}Play effect</button><div id="demo-rank">${rankCard({ ready: true, count: 500, best: 9.98, current: 9.98, threshold: 10, tier: 7, rusty: false })}</div><p class="chart-note">The frame below the controls is the one you'll earn in Overview. Reduced motion follows your device setting.</p></aside></div>`;
+    return `<div class="focus-stage timer-card effects-demo"><div class="focus-main"><div class="demo-heading"><span class="chip">ANIMATION STUDIO</span><span>Preview only · no solves saved</span><button class="btn btn-quiet" data-action="exit-effects">Back to timer ${icon("arrow")}</button></div><div class="focus-row"><div id="cube-mount" class="focus-cube"></div><div class="focus-time"><div class="focus-scramble-wrap"><p class="focus-scramble" data-copyable>${esc(scramblePending ? "Preparing scramble…" : currentScramble)}</p></div><div class="timer-surface"><span class="timer-digits" id="timer-digits">9.98</span></div><p class="demo-caption">Same stage. Same effects. Try every level.</p></div></div></div><aside class="solve-panel demo-controls"><h2>The reward room</h2><p>From a hundredth shaved off to a barrier you thought was impossible.</p><label class="field">Choose a moment<select id="demo-effect" data-control="demo-effect">${CTEffects.demoGroups().map(g => `<optgroup label="${g.label}">${g.options.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</optgroup>`).join("")}<optgroup label="Timer motion"><option value="inspection">Inspection: final seconds</option><option value="entrance">Scramble & cube entrance</option></optgroup></select></label><button class="btn btn-dark" data-action="play-effect">${icon("play")}Play effect</button><div id="demo-rank">${rankCard(CTEffects.demoEvent(demoEffect).status)}</div><p class="chart-note">The card below the controls is the one you'll earn in Overview. Turn Reward animations off in Settings, or ask your device for reduced motion, and everything here stays still.</p></aside></div>`;
   }
   function playDemoEffect() {
     if (view !== "effects") return;
     cancelAnimationFrame(demoRaf);
     demoEffect = $("#demo-effect").value;
-    const n = Number(demoEffect.split("-")[1]) || 10;
-    const status = { ready: true, count: 1500, best: n - .02, current: n - .02, threshold: n, tier: CTEffects.tier(n), rusty: demoEffect.startsWith("rust-") };
-    if (status.rusty) status.current = n + CTEffects.interval(n - 1e-7) + .15;
-    $("#demo-rank").innerHTML = rankCard(status);
-    $("#timer-digits").textContent = fmt(status.current);
+    const event = CTEffects.demoEvent(demoEffect);
+    Rank.unmount($("#demo-rank"));
+    $("#demo-rank").innerHTML = rankCard(event.status);
+    Rank.mount($("#demo-rank"));
+    $("#timer-digits").textContent = fmt(event.time);
     if (demoEffect === "entrance") {
       motion?.clear();
       scene?.destroy(); scene = new CubeScene($("#cube-mount"), currentScramble);
@@ -2533,20 +2540,10 @@ ${rankCard(status)}
         const elapsed = (performance.now() - since) / 1000;
         $("#timer-digits").textContent = elapsed >= 17 ? "DNF" : elapsed >= 15 ? "+2" : String(Math.ceil(15 - elapsed));
         if (elapsed < 17) demoRaf = requestAnimationFrame(tick);
-        else { effects().start("expiry"); effects().announce("Inspection expired", ["Preview complete · no solve saved"]); }
+        else { effects().start("expiry"); effects().present({ skin: "muted", title: "Inspection expired", lines: ["Preview complete · no solve saved"] }); }
       };
       tick(); return;
     }
-    const event = { records: [], status };
-    if (demoEffect.startsWith("sub-")) event.special = n;
-    else if (status.rusty) event.rusty = true;
-    else if (demoEffect === "recovery") event.recovered = true;
-    else if (demoEffect === "regular" || demoEffect === "rise") { event.barrier = 12.5; event.direction = demoEffect === "rise" ? "up" : "down"; status.current = event.direction === "up" ? 12.51 : 12.49; }
-    else {
-      event.records = [{ label: "Single PB", value: demoEffect === "pb-small" ? 10.99 : 8.42, improvement: demoEffect === "pb-small" ? .01 : 2.58 }];
-      if (demoEffect === "pb-stack") event.records.push(...[5, 12, 100].map(n => ({ label: `ao${n} PB`, value: 10 + n / 100, improvement: .23 })));
-    }
-    $("#timer-digits").textContent = fmt(event.records[0]?.value ?? status.current);
     effects().celebrate(event);
   }
 
@@ -2767,10 +2764,11 @@ ${rankCard(status)}
       this.stage.classList.add("cube-realistic");
       let phase = "load";
       try {
-        const studio = cubeStudio || (cubeStudio = await import("./cube-realistic.js"));
+        const studio = await loadCubeStudio();
         phase = "render";
         if (this.disposed || request !== this.appearanceRequest) return;
-        if (rebuild && (this.started || this.mount.classList.contains("cube-loading"))) {
+        const warm = this.slot === "appearance-cube" && studio.isAppearanceWarm(this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore);
+        if (rebuild && !warm && (this.started || this.mount.classList.contains("cube-loading"))) {
           // Show the throbber and let it paint before the build blocks the
           // thread; the transform animation then rides the compositor.
           beginCubeLoading(this.mount);
@@ -2784,6 +2782,9 @@ ${rankCard(status)}
         // a shader compile.
         const current = () => !this.disposed && request === this.appearanceRequest;
         this.realistic = studio.acquireCube(this.slot, this.stage, () => { if (current()) this.fallbackAppearance(); }, this.appearance.cubeFinish, this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore, () => { if (current()) this.finishLoad(); });
+        // The Appearance carousel parks one cube per model; build the rest in the
+        // background so swiping between them only swaps canvases.
+        if (this.slot === "appearance-cube") studio.prewarmAppearance(Object.keys(CUBE_MODELS).filter(model => model !== "standard"), this.appearance.cubeQuality, this.appearance.cubeEnvironment, this.appearance.cubeWear, this.appearance.cubeCore ?? pref.cubeCore);
         this.realistic.setPalette(CUBE_PALETTES[this.appearance.cubePalette].colors);
         if (this.isStudio && this.appearance.values) this.realistic.setTuning(this.appearance.values);
         this.draw();
@@ -3726,7 +3727,7 @@ ${rankCard(status)}
     else if (phase === "inspection" && motion?.mode !== "inspection")
       effects()?.start("inspection", { since: timer.inspectStart, voice: pref.inspectionVoice });
     else if (phase === "running") effects()?.start("start");
-    else if (phase === "idle") motion?.clear();
+    else if (phase === "idle" || (phase === "holding" && previous === "stopped")) motion?.clear();
     $(".timer-card")?.setAttribute("data-state", phase);
     document.body.classList.toggle("timing", phase === "running");
     document.body.classList.toggle(
@@ -3987,8 +3988,19 @@ ${rankCard(status)}
       closeActivityPopover();
       return;
     }
+    if (e.key === "Escape" && motion?.showing) {   // a reward card is up: Esc closes it first
+      e.preventDefault();
+      motion.dismissAnnouncement();
+      return;
+    }
     if (view === "effects") {
       if (e.key === "Escape") { e.preventDefault(); navigate("timer"); }
+      return;
+    }
+    if (view === "lighting" && e.key === "Escape") {
+      e.preventDefault();
+      if ($(".studio-confirm:not([hidden])")) toggleStudioConfirmation(false);
+      else exitLightingStudio();
       return;
     }
     const solveRow = e.target.closest?.("tr[data-solve]");
@@ -4210,7 +4222,7 @@ ${rankCard(status)}
     const inDrawer = drawerId;
     const inAverage = averageDrawer;
     keepPanel = true;
-    render();
+    refreshView();
     if (inAverage) openAverage(inAverage.n, id);
     else if (inDrawer) openSolve(id);
   }
@@ -4232,7 +4244,7 @@ ${rankCard(status)}
       $("#timer-digits").textContent = last ? fmt(C.value(last)) : "0.00";
       $("#timer-result").innerHTML = last ? resultControls(last) : "";
       schedulePanelRefresh();
-    } else render();
+    } else refreshView();
     toast("Solve removed.", false, {
       label: "Undo",
       run: () => {
@@ -4246,7 +4258,7 @@ ${rankCard(status)}
           $("#timer-digits").textContent = restored ? fmt(C.value(restored)) : "0.00";
           $("#timer-result").innerHTML = restored ? resultControls(restored) : "";
           schedulePanelRefresh();
-        } else render();
+        } else refreshView();
       },
     });
   }
@@ -4271,19 +4283,35 @@ ${rankCard(status)}
   // park and discard slots without repeating the dynamic import, and so the
   // idle warm-up below has somewhere to put it.
   let cubeStudio = null;
+  // The one way to get the renderer module, so settings that live outside a
+  // cube's identity (the floor shadow) are applied whichever screen loads it first.
+  function loadCubeStudio() {
+    if (cubeStudio) return Promise.resolve(cubeStudio);
+    return import("./cube-realistic.js").then(studio => {
+      cubeStudio = studio;
+      studio.setFloorShadow(pref.cubeFloorShadow);
+      return studio;
+    });
+  }
   let cubeWarming = 0;
-  // Load and pre-build the expensive, scramble-independent half of the 3D cube
-  // while the browser is idle. Without this the first spawn pays for the module
-  // fetch, ~140ms of procedural texture CPU and a shader compile at the exact
-  // moment it is trying to animate.
+  // Load and pre-build everything about every cube model that needs no WebGL
+  // context — the renderer module, shared textures, environment photograph and
+  // the procedural geometry — while the browser is idle. Without this the first
+  // spawn pays for the module fetch and texture CPU while it is trying to
+  // animate, and each swipe of the Appearance carousel pays for a model's
+  // geometry. Runs for every model, not only the selected one, and waits out a
+  // timer attempt rather than competing with it.
   function warmCubeStudio() {
-    if (cubeStudio || cubeWarming || pref.cubeFinish === "standard") return;
+    if (cubeWarming) return;
     const run = () => {
       cubeWarming = 0;
-      if (cubeStudio || pref.cubeFinish === "standard") return;
-      import("./cube-realistic.js").then(studio => {
-        cubeStudio = studio;
-        studio.warmCube(pref.cubeFinish, pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear);
+      if (timerBusy()) {
+        cubeWarming = setTimeout(run, 2000);
+        return;
+      }
+      loadCubeStudio().then(studio => {
+        if (pref.cubeFinish !== "standard") studio.warmCube(pref.cubeFinish, pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear);
+        return studio.warmAll(pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear, pref.cubeFinish);
       }).catch(() => {});
     };
     if (typeof requestIdleCallback === "function") cubeWarming = requestIdleCallback(run, { timeout: 1500 });
@@ -4315,6 +4343,9 @@ ${rankCard(status)}
     $("#dialog-content").innerHTML =
       `<div class="dialog-head"><h2 id="dialog-title">${title}</h2><button class="icon-btn" data-action="close-dialog" aria-label="Close dialog">${icon("close")}</button></div><div class="dialog-body">${body}</div>`;
     if (!$("#dialog").open) $("#dialog").showModal();
+    // showModal focuses the first control, which is the close button; hand focus to
+    // the dialog itself so it isn't ringed on every open. Fields with autofocus keep it.
+    if (document.activeElement === $(".dialog-head .icon-btn", $("#dialog"))) $("#dialog").focus({ preventScroll: true });
   }
   function closeDialog(immediate = false) {
     const dialog = $("#dialog");
@@ -4360,6 +4391,7 @@ ${rankCard(status)}
     drawerId = null;
     restoreMainCubeAfterAppearance(appearanceCleanup);
     if (view === "timer") $("#timer-surface")?.focus({ preventScroll: true });
+    if (view === "solves") libraryCtl?.refresh();   // a note or penalty may have changed in the dialog
   });
   $("#dialog").addEventListener("cancel", (e) => {
     e.preventDefault();
@@ -4367,10 +4399,7 @@ ${rankCard(status)}
       toggleStudioConfirmation(false);
       return;
     }
-    if ($(".quality-select.open")) {
-      closeQualityMenu();
-      return;
-    }
+    if (window.Dropdown?.closeOpen()) return;
     closeDialog();
   });
   $("#dialog").addEventListener("click", (e) => {
@@ -4434,7 +4463,7 @@ ${rankCard(status)}
       toast("Record or import some solves first.");
       return;
     }
-    const items = view === "solves" ? filtered() : c.solves;
+    const items = view === "solves" ? libraryItems() : c.solves;
     const set = new Set(items.map((s) => s.id));
     const selected = c.solves.filter((s) => set.has(s.id));
     download(
@@ -4598,9 +4627,9 @@ ${rankCard(status)}
     $("#dialog-title").textContent = `Average of ${n}`;
     const layout = document.createElement("div"); layout.className = "average-layout";
     const list = document.createElement("section"); list.className = "average-summary";
-    list.innerHTML = `<div class="average-total"><span>Latest ao${n}</span><strong>${fmt(C.average(items, n))}<small>s</small></strong><p>${n - 2} counted · fastest and slowest excluded</p></div><div class="average-solves" aria-label="Solves in this average">${items.map((s, i) => `<button class="average-solve ${s.id === selected.id ? "selected" : ""} ${i === best || i === worst ? "excluded" : ""}" data-average-solve="${esc(s.id)}" aria-pressed="${s.id === selected.id}"><span class="average-index">${String(i + 1).padStart(2, "0")}</span><strong>${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}</strong><span class="average-status">${i === best ? "Best · excluded" : i === worst ? "Worst · excluded" : `Solve #${all.length - n + i + 1}`}</span></button>`).join("")}</div>`;
+    list.innerHTML = `<div class="average-total"><span>Latest ao${n}</span><strong>${fmt(C.average(items, n))}<small>s</small></strong></div><div class="average-solves" aria-label="Solves in this average">${items.map((s, i) => `<button class="average-solve ${s.id === selected.id ? "selected" : ""} ${i === best || i === worst ? "excluded" : ""}" data-average-solve="${esc(s.id)}" aria-pressed="${s.id === selected.id}"><span class="average-index">${String(i + 1).padStart(2, "0")}</span><strong>${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}</strong><span class="average-status">${i === best ? "Best · excluded" : i === worst ? "Worst · excluded" : `Solve #${all.length - n + i + 1}`}</span></button>`).join("")}</div>`;
     const right = document.createElement("section"); right.className = "average-selected";
-    right.innerHTML = `<div class="average-selected-heading"><span>Solve #${all.indexOf(selected) + 1}</span><span>${items.indexOf(selected) + 1} of ${n} · click cube for 2D / 3D</span></div>`;
+    right.innerHTML = `<div class="average-selected-heading"><span>Solve #${all.indexOf(selected) + 1}</span></div>`;
     right.append(details); layout.append(list, right); body.append(layout);
     $(".average-solves").scrollTop = scroll;
     $(".average-solves").scrollLeft = scrollLeft;
@@ -4610,15 +4639,54 @@ ${rankCard(status)}
     const data = pref.timerMeanRange === "all" ? solves() : solves().slice(-Number(pref.timerMeanRange)), stats = C.stats(data);
     showDialog("Timer mean", `<p class="mean-explanation">Choose which solves contribute to the mean in the timer panel. Personal records and mean milestones always use the full category.</p><label class="field">Solve range<select data-control="timer-mean">${["all", 10000, 5000, 1000, 500, 100, 50, 12, 5].map(n => `<option value="${n}" ${String(n) === String(pref.timerMeanRange) ? "selected" : ""}>${n === "all" ? "Global · all solves" : `Last ${n.toLocaleString()} solves`}</option>`).join("")}</select></label><div class="mean-preview"><strong>${fmt(stats.mean)}<small>s</small></strong><span>${stats.valid.toLocaleString()} completed · ${stats.dnf} DNF excluded</span></div><p class="chart-note">Uses the available solves when the category is smaller than the selected range. +2 penalties count toward the mean.</p><div class="dialog-actions"><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`, "mean-dialog");
   }
+  // Shared building blocks for settings-style dialogs. The checkbox stays a real
+  // <input data-control>, so the existing change handlers keep working; CSS draws it
+  // as a switch.
+  function toggleRow(control, checked, title, hint = "", cls = "", disabled = false) {
+    return `<label class="toggle-row${cls ? ` ${cls}` : ""}"><span class="toggle-text"><strong>${title}</strong>${hint ? `<small>${hint}</small>` : ""}</span><input type="checkbox" role="switch" data-control="${control}"${checked ? " checked" : ""}${disabled ? " disabled" : ""}></label>`;
+  }
+  // Cube colour pickers are shared by Appearance (data-cube-*) and the Lighting
+  // studio (data-studio-*); `prefix` picks which handlers answer the clicks.
+  function paletteChoices(prefix, current) {
+    return `<div class="cube-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, p]) => `<button class="cube-palette-choice" data-${prefix}-palette="${value}" aria-pressed="${current === value}"><span class="cube-color-swatches" aria-hidden="true">${["U", "D", "F", "B", "L", "R"].map(f => `<i style="background:${p.colors[f]}"></i>`).join("")}</span><strong>${p.label}</strong></button>`).join("")}</div>`;
+  }
+  function coreChoices(prefix, current) {
+    return `<div class="cube-core-options" role="group" aria-label="Core color">${Object.entries(CUBE_CORES).map(([value, c]) => `<button data-${prefix}-core="${value}" aria-label="${c.label} core" title="${c.label} core" aria-pressed="${current === value}"><i style="background:${c.swatch}"></i></button>`).join("")}</div>`;
+  }
+  function crossChoices(prefix, current, palette) {
+    return `<div class="cube-cross-options" role="group" aria-label="Preferred cross color">${Object.entries(CUBE_CROSSES).map(([face, item]) => `<button data-${prefix}-cross="${face}" aria-label="${item.label}" title="${item.label}" aria-pressed="${current === face}"><i style="background:${CUBE_PALETTES[palette].colors[face]}"></i></button>`).join("")}</div>`;
+  }
+  function linkTile(action, iconName, title, hint) {
+    return `<button class="link-tile" data-action="${action}">${icon(iconName)}<span><strong>${title}</strong><small>${hint}</small></span></button>`;
+  }
+  function cubeSelect(control, label, table, current, disabled = false) {
+    return `<div class="cube-setting"><h3 class="group-label">${label}</h3><select data-control="${control}" aria-label="${label}"${disabled ? " disabled" : ""}>${Object.entries(table).map(([value, item]) => `<option value="${value}"${value === current ? " selected" : ""}>${item.label}</option>`).join("")}</select></div>`;
+  }
+  function settingsGroup(label, content, cls = "") {
+    return `<section class="settings-group${cls ? ` ${cls}` : ""}"><h3 class="group-label">${label}</h3>${content}</section>`;
+  }
   function settings() {
+    const timer = [
+        ["inspection", pref.inspection, "15-second inspection", "Press once to start it. +2 at 15 s, DNF at 17 s."],
+        ["inspection-voice", pref.inspectionVoice, "Spoken inspection cues", "Hear “8 seconds” and “12 seconds” while you inspect."],
+        ["reward-animations", pref.rewardAnimations, "Reward animations", "Effects for records, titles and rust, and the moving rank cards. Off keeps everything still."],
+        ["press-start", pref.pressToStart, "Start on a single press", "Skip the 350 ms hold: one press starts, the next stops."],
+        ["mouse-click-start", pref.mouseClickStart, "Allow mouse clicks to start", "Off means only keyboard and touch can start an attempt."],
+      ],
+      cube = [
+        ["scramble-animation", pref.scrambleAnimation, "Scramble animation", "Show the cube solved, then turn through the scramble."],
+        ["cube-net", pref.cubeMode === "net", "Flat net preview", "Open the scramble preview unfolded instead of in 3D."],
+      ],
+      rows = (list) => list.map((row) => toggleRow(...row)).join(""),
+      video = `<div class="camera-settings${pref.videoRecording ? " enabled" : ""}">${toggleRow("video-recording", pref.videoRecording, "Record solves on video", "Save a clip of every timed attempt. No audio.")}<div class="camera-options"><label class="field">Camera<select data-control="camera-device"><option value="">Detecting cameras…</option></select></label><div class="camera-setting-grid"><label class="field">Resolution<select data-control="video-resolution" id="camera-resolution">${Object.entries(VIDEO_RESOLUTIONS).map(([value, mode]) => `<option value="${value}"${pref.videoResolution === value ? " selected" : ""}>${mode.label}</option>`).join("")}</select></label><label class="field">Frame rate<select data-control="video-fps">${VIDEO_FPS.map((value) => `<option value="${value}"${pref.videoFps === value ? " selected" : ""}>${value} fps</option>`).join("")}</select></label><label class="field">Keep under (s)<input type="number" data-control="video-max-seconds" min="0" max="3600" step="1" inputmode="numeric" placeholder="No limit" value="${pref.videoMaxSeconds || ""}"></label></div><p class="field-hint">Leave “Keep under” empty to keep every clip. With a number, only faster solves keep their video; DNFs always do.</p>${toggleRow("video-record-inspection", pref.videoRecordInspection, "Record inspection")}<p class="camera-status" id="camera-status" role="status"></p></div></div>`,
+      workspace = `<div class="settings-links">${linkTile("appearance", "palette", "Appearance", "Theme and cube")}${linkTile("import", "upload", "Import CSV", "Bring in solves")}${linkTile("storage", "folder", "Storage", "Files and backups")}</div>`;
+    // One scrollable list. The group that grows (camera options) sits near the
+    // end so opening it moves only what is below it, and new settings can be
+    // added to any group without redesigning the dialog.
     showDialog(
       "Settings",
-      `<section class="camera-settings${pref.videoRecording ? " enabled" : ""}"><label class="toggle-row camera-toggle"><input type="checkbox" data-control="video-recording" ${pref.videoRecording ? "checked" : ""}><span><strong>Record solves on video</strong>Keep the selected camera ready, record each timed attempt, and save its clip with that solve. Camera audio is not recorded.</span></label><div class="camera-options"><div class="camera-setting-grid"><label class="field">Camera<select data-control="camera-device"><option value="">Detecting cameras…</option></select></label><label class="field">Resolution<select data-control="video-resolution" id="camera-resolution">${Object.entries(VIDEO_RESOLUTIONS).map(([value, mode]) => `<option value="${value}"${pref.videoResolution === value ? " selected" : ""}>${mode.label}</option>`).join("")}</select></label><label class="field">Frame rate<select data-control="video-fps">${VIDEO_FPS.map((value) => `<option value="${value}"${pref.videoFps === value ? " selected" : ""}>${value} fps</option>`).join("")}</select></label><label class="field">Keep under (s)<input type="number" data-control="video-max-seconds" min="0" max="3600" step="1" inputmode="numeric" placeholder="No limit" value="${pref.videoMaxSeconds || ""}"></label></div><label class="toggle-row camera-inline-toggle"><input type="checkbox" data-control="video-record-inspection" ${pref.videoRecordInspection ? "checked" : ""}><span><strong>Record inspection</strong></span></label><p class="camera-status" id="camera-status" role="status"></p><p class="camera-note">Leave “Keep videos under” empty to store every clip. With a number in it, only solves faster than that many seconds keep their video; slower ones are saved as solves without video. DNFs always keep theirs. 720p at 30 fps is the balanced default. The camera remains ready while this option is on so recording can begin without delaying the timer.</p></div></section><label class="toggle-row"><input type="checkbox" data-control="inspection" ${pref.inspection ? "checked" : ""}><span><strong>15-second inspection</strong>Press once to start inspection, then hold and release to start the solve. +2 at 15 seconds; at 17 the attempt is saved as a DNF automatically.</span></label><label class="toggle-row"><input type="checkbox" data-control="press-start" ${pref.pressToStart ? "checked" : ""}><span><strong>Start on a single press</strong>Skip the 350ms hold: one press starts the solve and the next key stops it. With inspection on, the first press starts inspection and the second starts the solve.</span></label><label class="toggle-row"><input type="checkbox" data-control="inspection-voice" ${pref.inspectionVoice ? "checked" : ""}><span><strong>Spoken inspection cues</strong>Hear “8 seconds” and “12 seconds” during inspection. Visual cues are always included.</span></label><label class="toggle-row"><input type="checkbox" data-control="scramble-animation" ${pref.scrambleAnimation ? "checked" : ""}><span><strong>Scramble animation</strong>Show the cube solved first, then animate through the scramble. Turn this off to spawn the cube directly scrambled.</span></label><label class="toggle-row"><input type="checkbox" data-control="cube-net" ${pref.cubeMode === "net" ? "checked" : ""}><span><strong>Show the cube as a flat net</strong>The scramble preview opens unfolded instead of in 3D. Clicking the cube switches either way.</span></label><div class="settings-actions"><button class="btn btn-quiet" data-action="appearance">${icon("palette")}Appearance</button><button class="btn btn-quiet" data-action="import">${icon("upload")}Import CSV</button><button class="btn btn-quiet" data-action="storage">${icon("folder")}Storage</button></div><div class="dialog-actions"><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
-    );
-    const mouseClickStart = document.querySelector('[data-control="inspection-voice"]');
-    mouseClickStart?.closest(".toggle-row")?.insertAdjacentHTML(
-      "beforebegin",
-      `<label class="toggle-row"><input type="checkbox" data-control="mouse-click-start" ${pref.mouseClickStart ? "checked" : ""}><span><strong>Allow mouse clicks to start the timer</strong>Turn this off to prevent a mouse click from starting a new attempt. Keyboard and touch controls still work.</span></label>`,
+      `<div class="settings-scroll scroll-fade">${settingsGroup("Timer", rows(timer))}${settingsGroup("Cube", rows(cube))}${settingsGroup("Video", video)}${settingsGroup("Workspace", workspace)}</div><div class="dialog-actions"><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
+      "settings-dialog",
     );
     refreshCameraSettingsUI();
     listCameraDevices();
@@ -4688,25 +4756,22 @@ ${rankCard(status)}
         ["violet", "Violet"],
         ["ember", "Ember"],
       ],
-      model = CUBE_MODELS[pref.cubeFinish],
-      quality = CUBE_QUALITY[pref.cubeQuality];
+      crossSetting = `<div class="cube-cross-setting"><h3 class="group-label">Cross color</h3>${crossChoices("cube", pref.cubeCross, pref.cubePalette)}</div>`,
+      model = CUBE_MODELS[pref.cubeFinish];
     // The app theme is a narrow rail. The larger cube workspace uses its width
     // for a preview and a dedicated controls column instead of stacking every
     // setting under a small preview.
     showDialog(
       "Appearance",
-      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3>Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3>Color theme</h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}"><i class="accent-swatch"></i><span>${label}</span>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><span>Cube</span><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div></div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3>Cube colors</h3><div class="cube-palette-options" role="group" aria-label="Cube colors">${Object.entries(CUBE_PALETTES).map(([value, p]) => `<button class="cube-palette-choice" data-cube-palette="${value}" aria-pressed="${pref.cubePalette === value}"><span class="cube-color-swatches" aria-hidden="true">${["U", "D", "F", "B", "L", "R"].map(f => `<i style="background:${p.colors[f]}"></i>`).join("")}</span><strong>${p.label}</strong></button>`).join("")}</div></div><div class="cube-setting cube-core-setting"><h3>Core</h3><div class="cube-core-options" role="group" aria-label="Core color">${Object.entries(CUBE_CORES).map(([value, c]) => `<button class="cube-core-choice" data-cube-core="${value}" aria-pressed="${pref.cubeCore === value}" title="${c.label} core"><i style="background:${c.swatch}" aria-hidden="true"></i>${c.label}</button>`).join("")}</div></div><div class="cube-setting cube-wear-setting"><label class="toggle-row"><input type="checkbox" data-control="cube-wear" ${pref.cubeWear ? "checked" : ""}><span><strong>Surface wear</strong></span></label></div><div class="cube-settings-row"><div class="cube-setting"><h3>Graphics quality</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="quality-value">${quality.label}</strong></span>${icon("down")}</button><div class="quality-menu" role="listbox" aria-label="Graphics quality">${Object.entries(CUBE_QUALITY).map(([value, q]) => `<button type="button" class="quality-option" role="option" data-cube-quality="${value}" aria-selected="${pref.cubeQuality === value}"><span><strong>${q.label}</strong></span>${icon("check")}</button>`).join("")}</div></div></div><div class="cube-setting"><h3>Environment</h3><div class="quality-select"><button type="button" class="quality-trigger" data-quality-toggle="1" aria-haspopup="listbox" aria-expanded="false"><span class="quality-value"><strong id="environment-value">${CUBE_ENVIRONMENTS[pref.cubeEnvironment].label}</strong></span>${icon("down")}</button><div class="quality-menu environment-menu" role="listbox" aria-label="Reflection environment">${Object.entries(CUBE_ENVIRONMENTS).map(([value, e]) => `<button type="button" class="quality-option" role="option" data-cube-environment="${value}" aria-selected="${pref.cubeEnvironment === value}"><span><strong>${e.label}</strong></span>${icon("check")}</button>`).join("")}</div></div></div></div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
+      `<div class="appearance-layout"><div class="appearance-scroll"><div class="appearance-section"><h3 class="group-label">Display mode</h3><div class="mode-options">${modes.map(([value, label]) => `<button class="mode-choice ${pref.theme === value ? "active" : ""}" data-theme-choice="${value}"><span class="mode-preview mode-preview-${value}"><i></i><i></i><i></i></span><strong>${label}</strong></button>`).join("")}</div></div><div class="appearance-section"><h3 class="group-label">Color theme<span class="group-value" data-accent-name>${accents.find(([value]) => value === pref.accent)[1]}</span></h3><div class="accent-options">${accents.map(([value, label]) => `<button class="accent-choice ${pref.accent === value ? "active" : ""}" data-accent-choice="${value}" aria-label="${label}" title="${label}"><i class="accent-swatch"></i>${icon("check")}</button>`).join("")}</div></div></div><div class="appearance-divider" aria-hidden="true"></div><div class="appearance-cube-pane"><div class="cube-pane-head"><h3 class="group-label">Cube</h3><button class="btn btn-quiet cube-studio-launch" data-action="lighting-studio">${icon("expand")}Lighting studio</button></div><div class="cube-workspace"><div class="cube-preview-column"><div class="cube-carousel" role="region" aria-roledescription="carousel" aria-label="Cube models" data-model="${pref.cubeFinish}"><div class="cube-carousel-frame"><div class="cube-carousel-track"><div id="appearance-cube"></div><div class="cube-carousel-caption"><strong id="cube-model-name">${model.label}</strong></div></div><button class="cube-nav cube-nav-prev" data-cube-step="-1" aria-label="Previous cube">${icon("left")}</button><button class="cube-nav cube-nav-next" data-cube-step="1" aria-label="Next cube">${icon("chevron")}</button></div><div class="cube-carousel-dots" aria-hidden="true">${Object.keys(CUBE_MODELS).map(value => `<i data-cube-dot="${value}"${value === pref.cubeFinish ? ` class="on"` : ""}></i>`).join("")}</div></div>${crossSetting}</div><div class="cube-controls"><div class="cube-setting cube-color-setting"><h3 class="group-label">Cube colors</h3>${paletteChoices("cube", pref.cubePalette)}</div><div class="cube-setting cube-core-setting"><h3 class="group-label">Core</h3>${coreChoices("cube", pref.cubeCore)}${toggleRow("cube-floor-shadow", pref.cubeFloorShadow, "Floor shadow", "", "floor-shadow-toggle")}</div><div class="cube-setting cube-wear-setting">${toggleRow("cube-wear", pref.cubeWear, "Surface wear", "Scratches and handling marks")}</div><div class="cube-settings-row">${cubeSelect("cube-quality", "Graphics quality", CUBE_QUALITY, pref.cubeQuality)}${cubeSelect("cube-environment", "Environment", CUBE_ENVIRONMENTS, pref.cubeEnvironment)}</div></div></div></div></div><div class="dialog-actions"><p id="cube-finish-status" class="cube-finish-status" role="status"></p><button class="btn btn-dark" data-action="close-dialog">Done</button></div>`,
       "appearance-dialog",
-    );
-    $(".cube-preview-column").insertAdjacentHTML(
-      "beforeend",
-      `<div class="cube-cross-setting"><h3>Cross color</h3><div class="cube-cross-options" role="group" aria-label="Preferred cross color">${Object.entries(CUBE_CROSSES).map(([face, item]) => `<button data-cube-cross="${face}" aria-label="${item.label}" title="${item.label}" aria-pressed="${pref.cubeCross === face}"><i style="background:${CUBE_PALETTES[pref.cubePalette].colors[face]}"></i></button>`).join("")}</div></div>`,
     );
     loadAppearanceCube();
   }
+  const tuningText = (key, value) => Number(value).toFixed(key === "glossRough" ? 3 : 2);
   function lightingControl(key, value) {
     const control = LIGHTING_CONTROLS[key];
-    return `<label class="lighting-control"><span><strong>${control.label}</strong><small>${control.detail}</small></span><output data-lighting-output="${key}">${Number(value).toFixed(key === "glossRough" ? 3 : 2)}</output><input type="range" min="${control.min}" max="${control.max}" step="${control.step}" value="${value}" data-lighting-control="${key}" aria-label="${control.label}"></label>`;
+    return `<label class="tune" title="${control.detail}"><span class="tune-name">${control.label}</span><output data-lighting-output="${key}">${tuningText(key, value)}</output><input type="range" min="${control.min}" max="${control.max}" step="${control.step}" value="${value}" data-lighting-control="${key}" aria-label="${control.label}"><small class="tune-detail">${control.detail}</small></label>`;
   }
   async function lightingStudio(next = null) {
     const opening = view !== "lighting";
@@ -4723,7 +4788,7 @@ ${rankCard(status)}
       loadingPaint = new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 700)));
     }
     try {
-      const studioModule = cubeStudio ? Promise.resolve(cubeStudio) : import("./cube-realistic.js");
+      const studioModule = loadCubeStudio();
       const [loadedStudio] = await Promise.all([studioModule, loadingPaint]);
       cubeStudio ||= loadedStudio;
     } catch {
@@ -4752,20 +4817,13 @@ ${rankCard(status)}
     if (!lightingState) return `<div class="lighting-loading" role="status">${CUBE_THROBBER}Opening lighting studio…</div>`;
     const model = lightingState.cubeFinish,
       environment = lightingState.cubeEnvironment,
-      environmentOptions = Object.entries(CUBE_ENVIRONMENTS).map(([value, item]) =>
-        `<option value="${value}"${value === environment ? " selected" : ""}>${item.label}</option>`).join(""),
-      modelOptions = Object.entries(CUBE_MODELS).map(([value, item]) =>
-        `<option value="${value}"${value === model ? " selected" : ""}>${item.label}</option>`).join(""),
-      qualityOptions = Object.entries(CUBE_QUALITY).map(([value, item]) =>
-        `<option value="${value}"${value === lightingState.cubeQuality ? " selected" : ""}>${item.label}</option>`).join(""),
-      realistic = model !== "standard";
-    const paletteOptions = Object.entries(CUBE_PALETTES).map(([value, item]) =>
-        `<button data-studio-palette="${value}" aria-pressed="${lightingState.cubePalette === value}" title="${item.label}"><span>${["U", "D", "F", "B", "L", "R"].map(face => `<i style="background:${item.colors[face]}"></i>`).join("")}</span><small>${item.label}</small></button>`).join(""),
-      coreOptions = Object.entries(CUBE_CORES).map(([value, item]) =>
-        `<button data-studio-core="${value}" aria-pressed="${lightingState.cubeCore === value}"><i style="background:${item.swatch}"></i>${item.label}</button>`).join(""),
-      crossOptions = Object.entries(CUBE_CROSSES).map(([face, item]) =>
-        `<button data-studio-cross="${face}" aria-pressed="${lightingState.cubeCross === face}" aria-label="${item.label}" title="${item.label}"><i style="background:${CUBE_PALETTES[lightingState.cubePalette].colors[face]}"></i></button>`).join("");
-    return `<div class="lighting-screen"><section class="lighting-canvas"><button class="studio-back" data-action="studio-exit" aria-label="Back to Appearance">${icon("left")}<span>Appearance</span></button><div id="cube-lighting-studio" class="lighting-cube"></div></section><aside class="lighting-panel"><header class="lighting-panel-title"><div><h1>Lighting studio</h1><p>Drag to rotate · scroll to zoom</p></div><button class="icon-btn" data-action="studio-exit" aria-label="Close studio">${icon("close")}</button></header><section class="studio-section studio-cube-settings"><div class="studio-section-title">Cube settings</div><div class="lighting-context"><label class="field">Model<select data-control="studio-model">${modelOptions}</select></label><label class="field">Environment<select data-control="studio-environment"${realistic ? "" : " disabled"}>${environmentOptions}</select></label><label class="field studio-quality-field">Graphics quality<select data-control="studio-quality"${realistic ? "" : " disabled"}>${qualityOptions}</select></label></div><div class="studio-setting-group"><span class="studio-setting-label">Colors</span><div class="studio-palette-options" role="group" aria-label="Cube colors">${paletteOptions}</div></div><div class="studio-setting-columns"><div class="studio-setting-group"><span class="studio-setting-label">Core</span><div class="studio-core-options" role="group" aria-label="Core color">${coreOptions}</div></div><div class="studio-setting-group"><span class="studio-setting-label">Cross color</span><div class="studio-cross-options" role="group" aria-label="Preferred cross color">${crossOptions}</div></div></div><label class="studio-wear"><span><strong>Surface wear</strong><small>Preview scratches and handling haze</small></span><input type="checkbox" data-control="studio-wear"${lightingState.cubeWear ? " checked" : ""}${realistic ? "" : " disabled"}><i></i></label></section><section class="studio-section lighting-tuning${realistic ? "" : " disabled"}"><div class="lighting-panel-head"><div class="studio-section-title">Light & material</div><button class="btn-link" data-action="studio-reset-tuning"${realistic ? "" : " disabled"}>Reset values</button></div>${realistic ? `<div class="lighting-control-list">${Object.entries(lightingState.values).map(([key, value]) => lightingControl(key, value)).join("")}</div>` : `<p class="studio-empty-note">Choose a realistic model to tune its lighting.</p>`}<div class="lighting-save-controls"><p id="lighting-save-status" class="lighting-save-status" role="status">${realistic ? server ? "Ready to save this calibration." : "Use the local launcher to save." : "Lighting is not available for Standard."}</p><button class="btn btn-dark" data-action="studio-confirm-open"${server && realistic ? "" : " disabled"}>Hardcode calibration</button></div></section></aside><div class="studio-confirm" role="dialog" aria-modal="true" aria-labelledby="studio-confirm-title" hidden><div><span class="studio-confirm-icon">${icon("settings")}</span><h3 id="studio-confirm-title">Hardcode this calibration?</h3><p>This writes the current light and material values into <strong>${CUBE_ENVIRONMENTS[environment].label}</strong> for <strong>${CUBE_MODELS[model].label}</strong>.</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="studio-confirm-cancel">Cancel</button><button class="btn btn-dark" data-action="studio-confirm-save">Yes, hardcode values</button></div></div></div></div>`;
+      realistic = model !== "standard",
+      tabs = [["light", "Light"], ["cube", "Cube"]],
+      light = realistic
+        ? `<div class="studio-scroll scroll-fade"><div class="tune-head"><span>${CUBE_MODELS[model].label} in ${CUBE_ENVIRONMENTS[environment].label}</span><button class="btn-link" data-action="studio-reset-tuning">${icon("reset")}Reset</button></div>${["Lights", "Material"].map(group => settingsGroup(group, Object.entries(lightingState.values).filter(([key]) => LIGHTING_CONTROLS[key].group === group).map(([key, value]) => lightingControl(key, value)).join(""))).join("")}</div><footer class="studio-footer"><p id="lighting-save-status" class="lighting-save-status" role="status">${server ? "Ready to save this calibration." : "Use the local launcher to save."}</p><button class="btn btn-dark" data-action="studio-confirm-open"${server ? "" : " disabled"}>Hardcode calibration</button></footer>`
+        : `<div class="studio-empty"><p>Lighting is tuned per realistic model.</p><button class="btn btn-quiet" data-action="studio-use-realistic">Switch to Tiles</button></div>`,
+      cube = `<div class="studio-scroll scroll-fade"><div class="studio-selects">${cubeSelect("studio-model", "Model", CUBE_MODELS, model)}${cubeSelect("studio-environment", "Environment", CUBE_ENVIRONMENTS, environment, !realistic)}${cubeSelect("studio-quality", "Graphics quality", CUBE_QUALITY, lightingState.cubeQuality, !realistic)}</div><div class="cube-setting"><h3 class="group-label">Cube colors</h3>${paletteChoices("studio", lightingState.cubePalette)}</div><div class="cube-setting"><h3 class="group-label">Core<span class="group-value" data-core-name>${CUBE_CORES[lightingState.cubeCore].label}</span></h3>${coreChoices("studio", lightingState.cubeCore)}</div><div class="cube-setting"><h3 class="group-label">Cross color</h3>${crossChoices("studio", lightingState.cubeCross, lightingState.cubePalette)}</div>${toggleRow("studio-wear", lightingState.cubeWear, "Surface wear", "Preview scratches and handling marks", "", !realistic)}</div>`;
+    return `<div class="lighting-screen"><section class="lighting-canvas"><button class="studio-back" data-action="studio-exit" aria-label="Back to Appearance">${icon("left")}Appearance</button><div id="cube-lighting-studio" class="lighting-cube"></div><p class="studio-hint">Drag to rotate · scroll to zoom</p></section><aside class="lighting-panel"><header class="lighting-panel-title"><h1>Lighting studio</h1></header><div class="segmented tabs studio-tabs" role="tablist" aria-label="Studio panels">${tabs.map(([id, label]) => `<button role="tab" class="${lightingTab === id ? "active" : ""}" aria-selected="${lightingTab === id}" data-studio-tab="${id}">${label}</button>`).join("")}</div><div class="studio-pane" role="tabpanel" data-studio-pane="light"${lightingTab === "light" ? "" : " hidden"}>${light}</div><div class="studio-pane" role="tabpanel" data-studio-pane="cube"${lightingTab === "cube" ? "" : " hidden"}>${cube}</div></aside><div class="studio-confirm" role="dialog" aria-modal="true" aria-labelledby="studio-confirm-title" hidden><div><span class="studio-confirm-icon">${icon("settings")}</span><h3 id="studio-confirm-title">Hardcode this calibration?</h3><p>This writes the current light and material values into <strong>${CUBE_ENVIRONMENTS[environment].label}</strong> for <strong>${CUBE_MODELS[model].label}</strong>.</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="studio-confirm-cancel">Cancel</button><button class="btn btn-dark" data-action="studio-confirm-save">Yes, hardcode values</button></div></div></div></div>`;
   }
   function exitLightingStudio() {
     const destination = ["overview", "timer", "solves", "insights"].includes(lightingReturnView) ? lightingReturnView : "timer";
@@ -4782,7 +4840,7 @@ ${rankCard(status)}
       const input = $(`[data-lighting-control="${key}"]`),
         output = $(`[data-lighting-output="${key}"]`);
       if (input) input.value = value;
-      if (output) output.textContent = Number(value).toFixed(key === "glossRough" ? 3 : 2);
+      if (output) output.textContent = tuningText(key, value);
     }
   }
   function toggleStudioConfirmation(open) {
@@ -4833,10 +4891,12 @@ ${rankCard(status)}
     const carousel = $(".cube-carousel");
     if (carousel) carousel.dataset.model = pref.cubeFinish;
     $$("[data-cube-palette]").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.cubePalette === pref.cubePalette)));
-    $$("[data-cube-quality]").forEach(el => el.setAttribute("aria-selected", String(el.dataset.cubeQuality === pref.cubeQuality)));
-    $$("[data-cube-environment]").forEach(el => el.setAttribute("aria-selected", String(el.dataset.cubeEnvironment === pref.cubeEnvironment)));
+    if ($('[data-control="cube-quality"]')) $('[data-control="cube-quality"]').value = pref.cubeQuality;
+    if ($('[data-control="cube-environment"]')) $('[data-control="cube-environment"]').value = pref.cubeEnvironment;
     if ($('[data-control="cube-wear"]')) $('[data-control="cube-wear"]').checked = pref.cubeWear;
+    if ($('[data-control="cube-floor-shadow"]')) $('[data-control="cube-floor-shadow"]').checked = pref.cubeFloorShadow;
     $$("[data-cube-core]").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.cubeCore === pref.cubeCore)));
+    $$("[data-core-name]").forEach(el => (el.textContent = CUBE_CORES[pref.cubeCore].label));
     $$("[data-cube-cross]").forEach(el => {
       el.setAttribute("aria-pressed", String(el.dataset.cubeCross === pref.cubeCross));
       const swatch = $("i", el);
@@ -4845,8 +4905,6 @@ ${rankCard(status)}
     $$("[data-cube-dot]").forEach(el => el.classList.toggle("on", el.dataset.cubeDot === pref.cubeFinish));
     if ($("#cube-model-name")) {
       $("#cube-model-name").textContent = CUBE_MODELS[pref.cubeFinish].label;
-      $("#quality-value").textContent = CUBE_QUALITY[pref.cubeQuality].label;
-      if ($("#environment-value")) $("#environment-value").textContent = CUBE_ENVIRONMENTS[pref.cubeEnvironment].label;
       $("#cube-finish-status").textContent = "";
     }
   }
@@ -4876,17 +4934,14 @@ ${rankCard(status)}
       appearanceScene.appearanceRequest++;
       appearanceScene.materializedIdentity = null;
     }
-    beginCubeLoading(mount);
+    // A model that is already built and parked swaps in at once: no loading
+    // shell, no debounce. Only a cold model needs the shell and the pause.
+    const warm = pref.cubeFinish === "standard" || cubeStudio?.isAppearanceWarm(pref.cubeFinish, pref.cubeQuality, pref.cubeEnvironment, pref.cubeWear, pref.cubeCore);
+    if (!warm) beginCubeLoading(mount);
     cubeApplyTimer = setTimeout(() => {
       cubeApplyTimer = 0;
       if (mount.isConnected && $("#dialog").open) applyCubeSelection();
-    }, 120);
-  }
-  function closeQualityMenu() {
-    const select = $(".quality-select.open");
-    if (!select) return;
-    select.classList.remove("open");
-    $(".quality-trigger", select).setAttribute("aria-expanded", "false");
+    }, warm ? 0 : 120);
   }
   function manage() {
     const c = active();
@@ -4933,7 +4988,7 @@ ${rankCard(status)}
     removed.solves.forEach((solve) => scheduleVideoDeletion(solve.id));
     pref.active = state.categories[Math.min(idx, state.categories.length - 1)]?.id || null;
     latestId = null;
-    libraryCount = LIBRARY_BATCH;
+    resetLibrary();
     savePref();
     persist();
     closeDialog();
@@ -5001,9 +5056,11 @@ ${rankCard(status)}
     render();
   }
   async function copyScramble() {
-    const text = drawerId
-      ? solves().find((s) => s.id === drawerId)?.scramble
-      : currentScramble;
+    await copyText(
+      drawerId ? solves().find((s) => s.id === drawerId)?.scramble : currentScramble,
+    );
+  }
+  async function copyText(text) {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -5063,7 +5120,6 @@ ${rankCard(status)}
     const activityPanel = e.target.closest(".activity-panel");
     if (!e.target.closest(".calendar-day") && !e.target.closest(".activity-popover"))
       closeActivityPopover(activityPanel || document);
-    if (!e.target.closest(".quality-select")) closeQualityMenu();
     const row = e.target.closest("tr[data-solve]");
     if (row && !b) {
       if (!selectionInside(row)) openSolve(row.dataset.solve);
@@ -5085,7 +5141,7 @@ ${rankCard(status)}
       pref.active = b.dataset.category;
       demo = null;
       latestId = null;
-      libraryCount = LIBRARY_BATCH;
+      resetLibrary();
       savePref();
       render();
       return;
@@ -5147,30 +5203,27 @@ ${rankCard(status)}
       bindCharts(body);
       return;
     }
-    if (b.dataset.qualityToggle) {
-      const select = b.closest(".quality-select"), open = !select.classList.contains("open");
-      select.classList.toggle("open", open);
-      b.setAttribute("aria-expanded", String(open));
-      if (open) $('.quality-option[aria-selected="true"]', select)?.focus();
-      return;
-    }
     if (b.dataset.cubeStep) {
       stepCubeModel(Number(b.dataset.cubeStep));
       return;
     }
-    if (b.dataset.cubePalette || b.dataset.cubeFinish || b.dataset.cubeQuality || b.dataset.cubeEnvironment || b.dataset.cubeCore || b.dataset.cubeCross) {
+    if (b.dataset.cubePalette || b.dataset.cubeFinish || b.dataset.cubeCore || b.dataset.cubeCross) {
       const previousCross = pref.cubeCross;
       if (Object.hasOwn(CUBE_PALETTES, b.dataset.cubePalette ?? "")) pref.cubePalette = b.dataset.cubePalette;
       if (Object.hasOwn(CUBE_CORES, b.dataset.cubeCore ?? "")) pref.cubeCore = b.dataset.cubeCore;
       if (Object.hasOwn(CUBE_CROSSES, b.dataset.cubeCross ?? "")) pref.cubeCross = b.dataset.cubeCross;
       if (Object.hasOwn(CUBE_MODELS, b.dataset.cubeFinish ?? "")) pref.cubeFinish = b.dataset.cubeFinish;
-      if (Object.hasOwn(CUBE_QUALITY, b.dataset.cubeQuality ?? "")) pref.cubeQuality = b.dataset.cubeQuality;
-      if (Object.hasOwn(CUBE_ENVIRONMENTS, b.dataset.cubeEnvironment ?? "")) pref.cubeEnvironment = b.dataset.cubeEnvironment;
-      if (b.dataset.cubeQuality || b.dataset.cubeEnvironment) {
-        closeQualityMenu();
-        b.closest(".cube-setting")?.querySelector(".quality-trigger")?.focus();
-      }
       applyCubeSelection(b.dataset.cubeCross ? previousCross : null);
+      return;
+    }
+    if (b.dataset.studioTab) {
+      lightingTab = b.dataset.studioTab;
+      $$("[data-studio-tab]").forEach(tab => {
+        const active = tab.dataset.studioTab === lightingTab;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", String(active));
+      });
+      $$("[data-studio-pane]").forEach(pane => (pane.hidden = pane.dataset.studioPane !== lightingTab));
       return;
     }
     if (b.dataset.studioPalette && lightingState && Object.hasOwn(CUBE_PALETTES, b.dataset.studioPalette)) {
@@ -5188,6 +5241,7 @@ ${rankCard(status)}
       lightingState.cubeCore = pref.cubeCore = b.dataset.studioCore;
       savePref();
       $$('[data-studio-core]').forEach(el => el.setAttribute("aria-pressed", String(el.dataset.studioCore === pref.cubeCore)));
+      $$("[data-core-name]").forEach(el => (el.textContent = CUBE_CORES[pref.cubeCore].label));
       lightingScene?.setAppearance();
       return;
     }
@@ -5384,6 +5438,13 @@ ${rankCard(status)}
       case "studio-exit":
         exitLightingStudio();
         break;
+      case "studio-use-realistic":
+        if (lightingState) {
+          pref.cubeFinish = "tiles";
+          savePref();
+          await lightingStudio({ ...lightingState, cubeFinish: "tiles" });
+        }
+        break;
       case "studio-reset-tuning": {
         if (!lightingState) break;
         const defaults = cubeStudio.cubeTuning(lightingState.cubeFinish, lightingState.cubeEnvironment, true);
@@ -5411,14 +5472,6 @@ ${rankCard(status)}
         break;
       case "exit-demo":
         demo = null;
-        render();
-        break;
-      case "clear-filter":
-        query = "";
-        filter = "all";
-        startDate = "";
-        endDate = "";
-        libraryCount = LIBRARY_BATCH;
         render();
         break;
       case "recovery":
@@ -5487,9 +5540,25 @@ ${rankCard(status)}
           await lightingStudio({ ...lightingState, cubeWear: e.target.checked });
         }
         return;
+      case "cube-quality":
+      case "cube-environment": {
+        const [table, field] = key === "cube-quality" ? [CUBE_QUALITY, "cubeQuality"] : [CUBE_ENVIRONMENTS, "cubeEnvironment"];
+        if (Object.hasOwn(table, e.target.value)) {
+          pref[field] = e.target.value;
+          applyCubeSelection();
+        }
+        return;
+      }
       case "cube-wear":
         pref.cubeWear = e.target.checked;
         applyCubeSelection();
+        return;
+      // Live, like a palette change: no rebuild, no loading shell.
+      case "cube-floor-shadow":
+        pref.cubeFloorShadow = e.target.checked;
+        savePref();
+        cubeStudio?.setFloorShadow(pref.cubeFloorShadow);
+        trainerThumbs.forEach(el => { if (el.firstElementChild) paintThumb(el); });
         return;
       case "video-record-inspection":
         pref.videoRecordInspection = e.target.checked;
@@ -5561,7 +5630,7 @@ ${rankCard(status)}
         pref.active = e.target.value;
         demo = null;
         latestId = null;
-        libraryCount = LIBRARY_BATCH;
+        resetLibrary();
         break;
       case "target": {
         const v = +e.target.value;
@@ -5592,6 +5661,10 @@ ${rankCard(status)}
       case "scramble-animation":
         pref.scrambleAnimation = e.target.checked;
         break;
+      case "reward-animations":
+        pref.rewardAnimations = e.target.checked;
+        applyRewardMotion();
+        break;
       case "timer-mean":
         pref.timerMeanRange = e.target.value;
         savePref();
@@ -5607,22 +5680,6 @@ ${rankCard(status)}
         break;
       case "mouse-click-start":
         pref.mouseClickStart = e.target.checked;
-        break;
-      case "sort":
-        sort = e.target.value;
-        libraryCount = LIBRARY_BATCH;
-        break;
-      case "filter":
-        filter = e.target.value;
-        libraryCount = LIBRARY_BATCH;
-        break;
-      case "start-date":
-        startDate = e.target.value;
-        libraryCount = LIBRARY_BATCH;
-        break;
-      case "end-date":
-        endDate = e.target.value;
-        libraryCount = LIBRARY_BATCH;
         break;
     }
     savePref();
@@ -5655,15 +5712,6 @@ ${rankCard(status)}
       }
       return;
     }
-    if (e.target.id !== "solve-search") return;
-    query = e.target.value;
-    libraryCount = LIBRARY_BATCH;
-    const pos = e.target.selectionStart;
-    render();
-    $("#solve-search").focus();
-    try {
-      $("#solve-search").setSelectionRange(pos, pos);
-    } catch {}
   });
   async function init() {
     renderIcons();

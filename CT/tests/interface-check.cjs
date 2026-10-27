@@ -74,11 +74,11 @@ const server = http.createServer(async (req, res) => {
     assert.ok(await page.locator('.toast').last().evaluate(e => { const toast=e.getBoundingClientRect(), panel=document.querySelector('.solve-panel').getBoundingClientRect(); return toast.right <= panel.left; }));
     await page.locator('.toast button').last().click();
     await page.locator('[data-view="solves"]').first().evaluate(e => e.click());
-    assert.equal(await page.locator('#library-results tbody tr').count(),60);
-    assert.equal(await page.locator('.pagination').count(),0);
+    await page.locator('.lib-row').first().waitFor();
+    assert.equal(await page.locator('.lib-row').count(),80);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    await page.waitForFunction(() => document.querySelectorAll('#library-results tbody tr').length > 60);
-    assert.ok(await page.locator('#library-results tbody tr').count() > 60);
+    await page.waitForFunction(() => document.querySelectorAll('.lib-row').length > 80);
+    assert.ok(await page.locator('.lib-row').count() > 80);
     await page.locator('[data-view="timer"]').first().evaluate(e => e.click()); await page.waitForTimeout(100);
     await page.setViewportSize({width:390,height:844}); await page.waitForTimeout(650);
     await page.screenshot({path:path.join(output,'timer-mobile.png')});

@@ -97,19 +97,18 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('.case-card').count(), 57, '57 OLL cases');
     assert.equal(await page.locator('.case-alg').count(), 57, 'one preferred alg per OLL');
     const headingActions = page.locator('.page-heading .heading-actions');
-    assert.ok((await headingActions.locator('[data-action="new-group"]').count()) === 1, 'New group is beside the set selector');
-    assert.ok((await headingActions.locator('[data-action="new-case"]').count()) === 1, 'New case is beside the set selector');
-    assert.ok((await headingActions.locator('[data-control="alg-set"]').count()) === 1, 'set selector remains in the heading');
-    assert.deepEqual(
-      await headingActions.locator('button, select').evaluateAll((els) =>
-        els.slice(0, 3).map((el) => el.dataset.action || el.dataset.control),
-      ),
-      ['new-group', 'new-case', 'alg-set'],
-      'creation controls precede the set selector',
-    );
-    await page.locator('.case-tools [data-action="select-all"]').click();
+    assert.ok((await headingActions.locator('[data-control="alg-set"]').count()) === 1, 'set selector stays in the heading');
+    assert.ok((await headingActions.locator('[data-action="manage-set"]').count()) === 1, 'the set menu is a visible button beside it');
+    assert.equal(await page.locator('.case-group .case-add').count(), 14, 'every group ends with an Add case tile');
+    assert.equal(await page.locator('.group-add').count(), 1, 'one New group button closes the page');
+    assert.equal(await page.locator('.trainer-summary .lib-stat b').first().textContent(), '57', 'the summary counts the cases');
+    await page.locator('#trainer-select').click();
     assert.equal(await page.locator('.case-card.picked').count(), 57, 'Select all picks the current set');
     assert.equal(await page.locator('.train-bar-count strong').textContent(), '57');
+    assert.equal(await page.locator('#trainer-picked b').textContent(), '57', 'the summary follows the selection');
+    assert.match(await page.locator('#trainer-select').textContent(), /Clear selection/, 'the same button now clears');
+    await page.locator('#trainer-select').click();
+    assert.equal(await page.locator('.case-card.picked').count(), 0, 'Clear selection empties it');
     await page.locator('[data-control="alg-set"]').selectOption({ label: 'PLL' });
     await page.waitForFunction(() => document.querySelectorAll('.case-card').length === 21);
 
@@ -148,11 +147,20 @@ const server = http.createServer((req, res) => {
     await page.waitForFunction(() => !document.querySelector('#dialog').open);
     assert.equal(await page.locator('.case-card').first().locator('.case-alg').textContent(), 'M2 U2 M2 U M2 U2 M2', 'the card follows the star');
 
-    // Two cases are enough to train; a group ticks all of its own.
+    // A group ticks all of its own cases.
     assert.ok(await page.locator('.train-bar').isHidden(), 'nothing selected, no Train');
     await page.locator('[data-group-check]').first().click();
     await page.waitForSelector('.train-bar:not([hidden])');
     assert.equal(await page.locator('.case-card.picked').count(), 4, 'the whole group is picked');
+    // One case is enough to train: the bar appears with a single pick.
+    await page.locator('[data-action="clear-selection"]').first().click();
+    await page.locator('[data-case-check]').first().click();
+    await page.waitForSelector('.train-bar:not([hidden])');
+    assert.equal(await page.locator('.train-bar-count strong').textContent(), '1', 'a single case can be trained');
+    await page.locator('[data-case-check]').first().click();
+    assert.ok(await page.locator('.train-bar').isHidden(), 'unticking the last case hides Train');
+    await page.locator('[data-group-check]').first().click();
+    await page.waitForSelector('.train-bar:not([hidden])');
 
     // A round of three attempts, timed the way the timer is.
     await page.locator('[data-action="train"]').click();

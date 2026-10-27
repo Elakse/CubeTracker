@@ -235,31 +235,39 @@ const server = http.createServer((req, res) => {
     await page.locator('[data-theme-choice="dark"]').click();
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(output, 'appearance-studio-dark.png') });
-    // Graphics quality is a dropdown: closed by default, opens upward inside a
-    // dialog that clips, applies on choice and closes again.
-    const qualityMenu = page.locator('.quality-menu[aria-label="Graphics quality"]');
-    const qualityTrigger = page.locator('#quality-value').locator('xpath=ancestor::button');
+    // Graphics quality is the shared dropdown: closed by default, opens in the
+    // top layer so the dialog cannot clip it, applies on choice and closes again.
+    const qualityMenu = page.locator('.dd-menu[aria-label="Graphics quality"]');
+    const qualityTrigger = page.locator('[data-control="cube-quality"] + .dd .dd-trigger');
     assert.equal(await qualityMenu.isVisible(), false);
     await qualityTrigger.click();
     await page.waitForTimeout(260);
     assert.equal(await qualityMenu.isVisible(), true);
-    const menuBox = await qualityMenu.boundingBox(), dialogBox = await page.locator('#dialog').boundingBox();
-    assert.ok(menuBox.y >= dialogBox.y - 1 && menuBox.y + menuBox.height <= dialogBox.y + dialogBox.height + 1, 'The quality menu stays inside the dialog');
+    const menuBox = await qualityMenu.boundingBox(), viewport = page.viewportSize();
+    assert.ok(menuBox.y >= 0 && menuBox.y + menuBox.height <= viewport.height, 'The quality menu stays on screen');
     await page.screenshot({ path: path.join(output, 'appearance-quality-menu.png') });
-    await page.locator('[data-cube-quality="high"]').click();
+    await qualityMenu.getByRole('option', { name: 'High' }).click();
     // Surface wear is independent of quality; opt into it explicitly.
     await page.locator('[data-control="cube-wear"]').check();
     await page.locator('#appearance-cube canvas[data-wear="loaded"]').waitFor({ timeout: 20000 });
     await page.waitForTimeout(220);
     assert.equal(await qualityMenu.isVisible(), false);
-    assert.equal(await page.locator('#quality-value').textContent(), 'High');
+    assert.equal((await qualityTrigger.textContent()).trim(), 'High');
     assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem('cubetracker.preferences.v2')))).cubeQuality, 'high');
     await qualityTrigger.click();
-    await page.locator('[data-cube-quality="balanced"]').click();
+    await qualityMenu.getByRole('option', { name: 'Balanced' }).click();
     await page.waitForTimeout(300);
     await page.locator('#appearance-cube canvas[data-wear="loaded"]').waitFor();
     await page.locator('[data-control="cube-wear"]').uncheck();
     await page.waitForFunction(() => !document.querySelector('#appearance-cube canvas[data-wear]'));
+    // The floor shadow is live: it is saved and applied without rebuilding the cube.
+    const floorShadowPref = () => page.evaluate(() => JSON.parse(localStorage.getItem('cubetracker.preferences.v2')).cubeFloorShadow);
+    const cubeCanvas = await page.locator('#appearance-cube canvas').elementHandle();
+    await page.locator('[data-control="cube-floor-shadow"]').uncheck();
+    assert.equal(await floorShadowPref(), false);
+    assert.equal(await page.locator('#appearance-cube canvas').elementHandle().then(h => h.evaluate((a, b) => a === b, cubeCanvas)), true, 'Toggling the floor shadow keeps the same canvas');
+    await page.locator('[data-control="cube-floor-shadow"]').check();
+    assert.equal(await floorShadowPref(), true);
     for (const width of [800, 390]) {
       await page.setViewportSize({ width, height: 844 });
       const framed = await page.locator('.cube-carousel-frame').evaluate(el => { const a = el.getBoundingClientRect(), b = el.closest('.dialog-body').getBoundingClientRect(); return a.left >= b.left - 1 && a.right <= b.right + 1 && a.width > 140; });

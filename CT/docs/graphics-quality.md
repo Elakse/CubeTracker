@@ -483,7 +483,14 @@ preceding step and asserts they differ, with no shader errors.
 
 The scene uses adaptive 4x/8x MSAA where supported and 1024/2048 shadow maps.
 The shadow is invalidated only when geometry or its transform changes, so a
-palette, exposure or environment redraw reuses it. The scene renders only on
+palette, exposure or environment redraw reuses it.
+
+Two shadows, two sources. The cube's own shading and self-shadowing come from
+the pieces (`castShadow`/`receiveShadow`) and the key light. The shadow it throws
+behind itself is a separate `ShadowMaterial` plane (`this.floor`). The Appearance
+"Floor shadow" switch (`pref.cubeFloorShadow`) only toggles that plane's
+visibility through `setFloorShadow()`, so the self-shadowing is untouched and no
+shadow map or cube has to be rebuilt. The scene renders only on
 interaction. The UV GPU review covers four orientations, partial turns,
 reversal, disposal, and deterministic redraws at 240 and 640 pixels over light
 and dark backgrounds. Run with `UV_QUALITY=cinematic`.

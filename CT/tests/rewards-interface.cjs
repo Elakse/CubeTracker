@@ -47,24 +47,35 @@ const server = http.createServer(async (req,res) => {
     await page.locator('.effects-demo').waitFor();
     assert.equal(await page.locator('#timer-surface').count(),0);
     await page.clock.install();
-    for (const effect of ['pb-small','pb-big','pb-stack','regular','rise',...require('../assets/timer-effects.js').SPECIAL.map(n=>`sub-${n}`),'rust-5','recovery']) {
-      await page.locator('#demo-effect').selectOption(effect);
-      await page.clock.runFor(700);
-      assert.equal(await page.locator('.timer-achievement.visible').count(),1,effect);
-      if (['pb-big','sub-60','sub-10','sub-5','rust-5'].includes(effect)) await page.screenshot({path:path.join(output,`reward-${effect}.png`)});
-      if (effect === 'pb-small') assert.equal(await page.locator('.timer-achievement').getAttribute('data-tier'),'1');
-      if (effect === 'sub-5') {
-        assert.equal(await page.locator('.timer-achievement').getAttribute('data-tier'),'11');
-        assert.equal(await page.locator('.timer-achievement-shade.visible').count(),1);
-        assert.ok(await page.locator('.timer-achievement.visible').evaluate(e => { const r=e.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 2 && Math.abs((r.top + r.bottom) / 2 - innerHeight / 2) < 2; }));
-        await page.locator('.timer-achievement-shade.visible').click({position:{x:10,y:10}}); await page.clock.runFor(500);
-        assert.equal(await page.locator('.timer-achievement.visible').count(),0);
+    const centered = e => e.evaluate(el => { const r = el.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - innerWidth / 2) < innerWidth * .35 && r.top >= 0 && r.bottom <= innerHeight; });
+    const effects = require('../assets/timer-effects.js');
+    require('../assets/rank-cards.js'); const frameOf = level => globalThis.CTRank.frame(level);   // the card design each level wears
+    const expectCard = { 'single': 'modal', 'average': 'modal', 'stack': 'modal', 'barrier-down': 'visible', 'barrier-up': 'visible', 'worst': 'visible', 'accident': 'visible', 'recovery': 'rank-card' };
+    for (const [id] of effects.demoGroups().flatMap(g => g.options)) {
+      await page.locator('#demo-effect').selectOption(id);
+      const card = page.locator('.timer-achievement.visible');
+      for (let t = 0; t < (id === 'ordinary' ? 3 : 14) && !(await card.count()); t++) { await page.clock.fastForward(1000); await page.clock.runFor(100); }
+      if (id === 'ordinary') { assert.equal(await card.count(), 0, id); continue; }
+      await page.clock.runFor(400);
+      assert.equal(await card.count(), 1, id);
+      assert.ok(await centered(card), `${id} stays on screen`);
+      if (expectCard[id]) assert.ok((await card.getAttribute('class')).includes(expectCard[id]), id);
+      if (id.startsWith('sub-')) {
+        const level = effects.tier(Number(id.slice(4)));
+        assert.ok((await card.getAttribute('class')).includes('rank-card'), id);
+        assert.equal(await card.getAttribute('data-tier'), String(frameOf(level)), id);
+        assert.equal(await page.locator('.timer-achievement-shade.visible').count(), 1, id);
+        await page.locator('.timer-achievement-shade.visible').click({ position: { x: 10, y: 10 } }); await page.clock.runFor(600);
+        assert.equal(await page.locator('.timer-achievement.visible').count(), 0, id);
       }
-      if (effect === 'rust-5') assert.ok((await page.locator('.timer-achievement').getAttribute('class')).includes('is-rusty'));
+      if (id.startsWith('rust-')) assert.ok((await card.getAttribute('class')).includes('is-rusty'), id);
+      // the preview card in the side panel is the same card the overview shows
+      assert.equal(await page.locator('#demo-rank .rank-card').count(), 1, id);
+      if (['single', 'sub-10', 'sub-12', 'sub-5', 'rust-10'].includes(id)) await page.screenshot({ path: path.join(output, `reward-${id}.png`) });
     }
+    assert.equal(await page.locator('#demo-rank .rank-card').evaluate(e => e.getBoundingClientRect().right <= innerWidth), true, 'side preview fits its panel');
     await page.locator('#demo-effect').selectOption('inspection'); await page.clock.runFor(3100);
     assert.match(await page.locator('.inspection-alert.visible').innerText(),/SECONDS/);
-    await page.screenshot({path:path.join(output,'reward-inspection.png')});
     await page.clock.runFor(2000); assert.equal(await page.locator('#timer-digits').innerText(),'+2');
     await page.clock.runFor(2000); assert.equal(await page.locator('#timer-digits').innerText(),'DNF');
     await page.locator('#demo-effect').selectOption('entrance');
@@ -79,14 +90,16 @@ const server = http.createServer(async (req,res) => {
     assert.equal(new Set(colors).size,4);
     await page.evaluate(()=>document.documentElement.dataset.accent='violet');
     await page.setViewportSize({width:390,height:844}); await page.clock.runFor(1000);
-    await page.locator('#demo-effect').selectOption('sub-5'); await page.clock.runFor(700);
+    await page.locator('#demo-effect').selectOption('sub-5'); for (let t = 0; t < 14 && !(await page.locator('.timer-achievement.visible').count()); t++) { await page.clock.fastForward(1000); await page.clock.runFor(100); }
     await page.screenshot({path:path.join(output,'reward-mobile.png')});
     assert.ok(await page.locator('.timer-achievement').evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight;}));
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await page.emulateMedia({reducedMotion:'reduce'});
-    await page.locator('#demo-effect').selectOption('rust-5'); await page.clock.runFor(200);
+    await page.locator('#demo-effect').selectOption('rust-5'); await page.clock.runFor(900);
+    assert.equal(await page.locator('html[data-reward-motion="off"]').count(),1);
     assert.equal(await page.locator('canvas.timer-effects').isVisible(),false);
     assert.match(await page.locator('.timer-achievement.visible').innerText(),/Rusty sub 5s/);
+    assert.equal(await page.locator('#demo-rank canvas').count(),0);
     await page.locator('#demo-effect').selectOption('inspection'); await page.clock.runFor(3100);
     assert.equal(await page.locator('canvas.timer-effects').isVisible(),false);
     assert.match(await page.locator('.inspection-alert.visible').innerText(),/SECONDS/);

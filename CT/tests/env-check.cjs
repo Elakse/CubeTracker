@@ -27,7 +27,7 @@ const server = http.createServer((req, res) => {
       };
       return {
         dialog: bounds(document.querySelector('#dialog')),
-        environment: bounds(document.querySelector('#environment-value').closest('.quality-trigger')),
+        environment: bounds(document.querySelector('[data-control="cube-environment"] + .dd .dd-trigger')),
         done: bounds(document.querySelector('#dialog .dialog-actions [data-action="close-dialog"]')),
       };
     });
@@ -43,9 +43,7 @@ const server = http.createServer((req, res) => {
     console.log('studio canvas up');
     // Switch to a downloaded HDR in settings.
     await page.locator('#theme-btn').evaluate(el => el.click());
-    await page.getByRole('button', { name: /^Studio / }).click();
-    await page.locator('[data-cube-environment="ferndale04"]').waitFor({ timeout: 5000 });
-    await page.locator('[data-cube-environment="ferndale04"]').click();
+    await page.locator('[data-control="cube-environment"]').selectOption('ferndale04');
     await page.waitForTimeout(2500);
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('cubetracker.preferences.v2')).cubeEnvironment);
     assert.equal(saved, 'ferndale04', 'preference saved');
@@ -69,8 +67,7 @@ const server = http.createServer((req, res) => {
     console.log('PASS: downloaded HDR renders on the timer cube');
     // Switch back to studio and confirm the default is restored.
     await page.locator('#theme-btn').evaluate(el => el.click());
-    await page.getByRole('button', { name: /^Ferndale studio 04 / }).click();
-    await page.locator('[data-cube-environment="studio"]').click();
+    await page.locator('[data-control="cube-environment"]').selectOption('studio');
     await page.waitForTimeout(1200);
     await page.locator('#dialog [data-action="close-dialog"]').first().click();
     await page.waitForTimeout(1200);

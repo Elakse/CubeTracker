@@ -377,6 +377,14 @@ function loadEnvironment(name) {
 // an identical renderer. A slot keeps its cube across scene rebuilds and only
 // rebuilds when the model or the quality actually changes.
 const STUDIO = new Map();
+// Every cube that still owns a WebGL context. A setting that is not part of a
+// cube's identity (the floor shadow) is pushed to all of them, parked ones too.
+const LIVE = new Set();
+let FLOOR_SHADOW = true;
+export function setFloorShadow(on) {
+  FLOOR_SHADOW = Boolean(on);
+  for (const cube of LIVE) cube.setFloorShadow(FLOOR_SHADOW);
+}
 // Appearance keeps at most the five realistic models for one configuration.
 // Parked canvases retain compiled shaders; all are freed with the dialog.
 const APPEARANCE_MODELS = new Map();
@@ -400,6 +408,99 @@ export function warmCube(model = "tiles", quality = "balanced", environment = "s
   }
   if (COATED(model)) sharedMap("coating", () => coatingNormal());
   if (environment !== "studio") loadEnvironment(environment);
+}
+
+const idle = () => new Promise(resolve => (typeof requestIdleCallback === "function" ? requestIdleCallback(resolve, { timeout: 1200 }) : setTimeout(resolve, 60)));
+
+// Everything about a model that needs no WebGL context: its geometry, its
+// procedural and wear maps. One model at a time, each in its own idle slice, so
+// nothing the user is doing stalls. After this, building a cube of that model
+// is a context, some materials and a shader compile rather than a pause.
+export async function warmGeometry(model, quality = "balanced", wear = false, stillWanted = () => true) {
+  if (!Object.hasOwn(MODELS, model)) return;
+  quality = Object.hasOwn(QUALITY, quality) ? quality : "balanced";
+  const settings = QUALITY[quality];
+  // Each shape is a few milliseconds; hand the thread back between them so a
+  // whole model never lands as one long task.
+  let sliceStart = performance.now();
+  const build = async make => {
+    make().dispose();
+    if (performance.now() - sliceStart > 8) {
+      await idle();
+      sliceStart = performance.now();
+    }
+    return stillWanted();
+  };
+  if (SCULPTED(model)) {
+    for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
+      if ((x || y || z) && !await build(() => pieceBodyGeometry(model, [x, y, z], quality))) return;
+    }
+  } else await build(() => cachedGeometry("body-box", () => new RoundedBoxGeometry(.972, .972, .972, 5, .085)));
+  await build(() => cachedGeometry("core-sphere", () => new T.SphereGeometry(.73, 24, 16)));
+  const { cells, spread, variants } = capPlan(model, settings, Boolean(wear));
+  if (SEPARATE_HOLDERS(model)) for (let cell = 0; cell < 9; cell++) if (!await build(() => faceGeometry("speedcube", cell))) return;
+  for (let i = 0; i < spread; i++) if (!await build(() => faceGeometry(model, variants[i].cell ?? i % cells, variants[i]))) return;
+}
+let warmedAll = "";
+export async function warmAll(quality = "balanced", environment = "studio", wear = false, current = null) {
+  const key = [quality, environment, wear].join("|");
+  if (warmedAll === key) return;
+  warmedAll = key;
+  const order = Object.keys(MODELS).filter(model => model !== current);
+  if (current && Object.hasOwn(MODELS, current)) order.unshift(current);
+  for (const model of order) {
+    await idle();
+    if (warmedAll !== key) return;
+    try {
+      warmCube(model, quality, environment, wear);
+      await warmGeometry(model, quality, wear, () => warmedAll === key);
+    } catch { /* a model that cannot be pre-built is simply built on demand */ }
+  }
+}
+
+// Appearance parks one live cube per model so the carousel only has to swap
+// canvases. This builds the ones that are missing, in the background, once the
+// dialog's own cube is up. A cube that was built here is indistinguishable from
+// one the carousel would have built on demand, just earlier.
+const warmingModels = new Set();
+export async function prewarmAppearance(models, quality, environment, wear = false, core = "black") {
+  const configuration = [quality, environment, wear, CORE(core)].join("|");
+  let host = null;
+  try {
+    for (const model of models) {
+      if (!Object.hasOwn(MODELS, model)) continue;
+      await idle();
+      // The dialog closed or a setting changed: whoever owns the new
+      // configuration will ask again.
+      if (appearanceConfiguration !== configuration || !STUDIO.has("appearance-cube")) return;
+      const existing = APPEARANCE_MODELS.get(model);
+      if (warmingModels.has(model) || (existing && !existing.disposed)) continue;
+      warmingModels.add(model);
+      try {
+        if (!host) {
+          host = document.createElement("div");
+          host.setAttribute("aria-hidden", "true");
+          host.style.cssText = "position:fixed;left:-10000px;top:0;width:360px;height:360px;pointer-events:none;visibility:hidden";
+          document.body.append(host);
+        }
+        const cube = new RealisticCube(host, () => {}, model, quality, environment, wear, core);
+        cube.slot = "appearance-cube";
+        APPEARANCE_MODELS.set(model, cube);
+        // The first render compiles this model's shaders now rather than when
+        // it slides into view.
+        cube.resize();
+        cube.park();
+      } finally {
+        warmingModels.delete(model);
+      }
+    }
+  } catch { /* WebGL unavailable or lost: the carousel builds on demand */ }
+  finally { host?.remove(); }
+}
+export function isAppearanceWarm(model, quality, environment, wear = false, core = "black") {
+  if (appearanceConfiguration !== [quality, environment, wear, CORE(core)].join("|")) return false;
+  const cube = APPEARANCE_MODELS.get(model);
+  return Boolean(cube && !cube.disposed);
 }
 
 // Hand back the slot's cube, adopting it into `stage` when it can be reused and
@@ -629,6 +730,17 @@ function coatingNormal(size = 512, strength = .30) {
   return texture;
 }
 
+// How many distinct cap buffers a cube builds and what each one is. Shared by
+// the constructor and the idle pre-build so both always ask for the same shapes.
+function capPlan(model, settings, wear) {
+  const stickers = STICKERED(model);
+  const cells = SCULPTED(model) || (stickers && wear) ? 9 : 1;
+  const spread = settings.detail || (stickers && wear) ? 54 : 9;
+  const variants = settings.detail
+    ? capVariants()
+    : capVariants().slice(0, spread).map(v => ({ shift: v.shift, chip: v.chip }));
+  return { cells, spread, variants };
+}
 function capVariants() {
   // One entry per cap: its texture offset and tiny moulding-colour variation.
   // Deterministic, so a cube looks the same every time it is built.
@@ -686,7 +798,24 @@ const SCULPTED_PROFILE = [[.48,.04,-.045], [.494,.043,-.021], [.497,.048,-.004],
 const SCULPTED_CENTER_RINGS = [[.48,.04,-.045,1], [.494,.043,-.021,1], [.497,.052,-.004,1], [.4875,.0539,.00151,.975], [.4775,.056,.00634,.929], [.4673,.058,.01047,.88], [.4568,.0602,.01388,.83], [.4461,.0623,.01655,.779], [.4353,.0645,.01846,.731], [.4243,.0668,.01962,.687], [.4133,.065,.02,.643], [.365,.068,.02,.45], [.32,.07,.02,.2], [.285,.068,.02,0], [.195,.06,.02,0], [.12,.05,.02,0]];
 const UV_CENTER_RINGS = [[.480,.040,-.045,1], [.494,.043,-.021,1], [.497,.160,-.004,1], [.490,.170,.004,1], [.475,.210,.008,.95], [.465,.250,.013,.75], [.460,.300,.018,.45], [.445,.350,.024,0], [.365,.365,.0215,0], [.285,.285,.020,0], [.195,.195,COATING_CENTER,0], [.120,.120,COATING_CENTER,0]];
 
+// Geometry is deterministic too, and it is the heaviest CPU part of a cube: the
+// 26 sculpted body pieces and every moulded cap are generated procedurally, which
+// blocked the main thread for hundreds of milliseconds each time a model was
+// built — i.e. on every swipe of the Appearance carousel. The first build of a
+// shape is kept as a master; every cube gets its own cheap copy, so a cube can
+// still dispose its geometry without touching another renderer's.
+const GEOMETRY_CACHE = new Map();
+function cachedGeometry(key, build) {
+  let master = GEOMETRY_CACHE.get(key);
+  if (!master) GEOMETRY_CACHE.set(key, master = build());
+  const copy = new T.BufferGeometry().copy(master);
+  copy.userData = { ...master.userData };
+  return copy;
+}
 function faceGeometry(model = "tiles", cell = 4, variant = null, layer = STICKERED(model) ? "sticker" : "cap") {
+  return cachedGeometry(`face|${model}|${cell}|${layer}|${variant ? JSON.stringify(variant) : ""}`, () => buildFaceGeometry(model, cell, variant, layer));
+}
+function buildFaceGeometry(model, cell, variant, layer) {
   const film = layer === "sticker", shapedFilm = film && SCULPTED(model);
   // Concentric rounded-square contours form a molded, slightly convex cap.
   // The crown bends softbox reflections across the face instead of leaving a
@@ -1102,6 +1231,9 @@ function bodyFaces(model, p) {
 // every contour (rather than overlapping independently capped extrusions) keeps
 // the corner/edge junctions clean, without internal faces or depth offsets.
 function pieceBodyGeometry(model, p, quality) {
+  return cachedGeometry(`body|${model}|${quality}|${p.join(",")}`, () => buildPieceBodyGeometry(model, p, quality));
+}
+function buildPieceBodyGeometry(model, p, quality) {
   const body = BODY[model] ?? BODY.speedcube;
   const samples = quality === "low" ? 64 : quality === "balanced" ? 96 : 144;
   const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
@@ -1254,6 +1386,7 @@ export class RealisticCube {
             this.applyEnvironmentScale(parsed.scale);
           });
       this.setupLight();
+      LIVE.add(this);
       this.grain = sharedMap("grain", plasticGrain);
       // UV adds a curved clear surface over the same stickerless cap outlines.
       const speedcube = SCULPTED(model), coated = COATED(model), stickers = STICKERED(model);
@@ -1302,7 +1435,7 @@ export class RealisticCube {
           ? { normalMap: this.scratches, normalScale: new T.Vector2(WEAR.speedcube.normal, WEAR.speedcube.normal) }
           : { bumpMap: this.grain, bumpScale: coated ? .0004 : .0008 }),
       }));
-      const body = speedcube ? null : this.geometry(new RoundedBoxGeometry(.972, .972, .972, 5, .085));
+      const body = speedcube ? null : this.geometry(cachedGeometry("body-box", () => new RoundedBoxGeometry(.972, .972, .972, 5, .085)));
       this.bodies = [];
       for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
         if (!x && !y && !z) continue;
@@ -1313,12 +1446,12 @@ export class RealisticCube {
         this.bodies.push({ mesh, p: [x, y, z] });
       }
       // The core becomes visible in the gaps while a layer turns.
-      this.root.add(new T.Mesh(this.geometry(new T.SphereGeometry(.73, 24, 16)), shell));
+      this.root.add(new T.Mesh(this.geometry(cachedGeometry("core-sphere", () => new T.SphereGeometry(.73, 24, 16))), shell));
       // At detail quality every cap gets its own geometry: the same moulded
       // shape, but its own texture offset and tint, so 54 caps stop being copies.
       // Stickers use the same molded outline for every cell, but wear needs to
       // know which one is the center so its atlas tile can stay bite-free.
-      const cells = speedcube || (stickers && this.wear) ? 9 : 1;
+      const { cells, spread, variants } = capPlan(model, settings, this.wear);
       // How many distinct cap buffers exist. Detail quality gives all 54 their
       // own; below it, nine — one per position on a face — rather than one.
       //
@@ -1329,10 +1462,6 @@ export class RealisticCube {
       // that matters, because the comparison the eye actually makes is between
       // neighbours on one face, and with nine no two caps on a face repeat.
       // The sculpted models already paid for nine to get their moulded cells.
-      const spread = settings.detail || (stickers && this.wear) ? 54 : 9;
-      const variants = settings.detail
-        ? capVariants()
-        : capVariants().slice(0, spread).map(v => ({ shift: v.shift, chip: v.chip }));
       // The exposed ABS rim is a separate material and mesh from the vinyl.
       // Its outline, mitered sidewalls and circular center transition are the
       // original Speedcube mould. Children inherit the sticker's complete pose.
@@ -2427,6 +2556,8 @@ export class RealisticCube {
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -2.55;
     floor.receiveShadow = true;
+    floor.visible = FLOOR_SHADOW;
+    this.floor = floor;
     this.scene.add(floor);
   }
   setPalette(colors) {
@@ -2582,6 +2713,14 @@ export class RealisticCube {
   invalidateShadow() {
     if (this.settings.shadows) this.renderer.shadowMap.needsUpdate = true;
   }
+  // The floor plane only catches the cube's shadow. Hiding it leaves the cube's
+  // own shading and self-shadowing alone: those come from the pieces and the key
+  // light. The shadow map is untouched, so there is nothing to rebuild.
+  setFloorShadow(on) {
+    if (!this.floor || this.floor.visible === on) return;
+    this.floor.visible = on;
+    this.render();
+  }
   frameBudget(width, height) {
     const speedcube = SCULPTED(this.model);
     const fitPixels = (ratio, pixels) => Math.min(ratio, Math.sqrt(pixels / Math.max(1, width * height)));
@@ -2728,6 +2867,7 @@ export class RealisticCube {
   destroy() {
     if (this.disposed) return;
     this.disposed = true;
+    LIVE.delete(this);
     if (this.slot && STUDIO.get(this.slot) === this) STUDIO.delete(this.slot);
     this.observer?.disconnect();
     this.canvas?.removeEventListener("webglcontextlost", this.onLost);
