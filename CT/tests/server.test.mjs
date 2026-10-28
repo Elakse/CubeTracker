@@ -238,6 +238,42 @@ test("server serves the app, preserves saves, rejects stale writes and reloads s
     assert.equal(loaded.categories[0].name, "Renamed");
     assert.equal(loaded.categories[0].solves[0].penalty, "+2");
     assert.equal(loaded.revision, 3);
+    await t.test("virtual metadata, reconstruction CSV and deleted history survive durable reload", async () => {
+      const V = require("../assets/virtual.js"), attempt = new V.Attempt("R U");
+      attempt.accept("U'", 100);
+      const solve = {id:"virtual-solve",date:"2026-10-27T12:00:00.000Z",...attempt.accept("R'",1334).result};
+      // A solve started with another cross colour down stores its hold as `orientation`; the saver must replay it.
+      const held = new V.Attempt("R U","x2");held.accept("x2",0);held.accept("U'",100);
+      const heldSolve = {id:"virtual-held",date:"2026-10-27T12:05:00.000Z",...held.accept("R'",900).result};
+      assert.equal(heldSolve.reconstruction.orientation,"x2");
+      const virtual = {id:"virtual-3x3",name:"3x3 Virtual",type:"virtual",puzzle:"3x3",solves:[solve,heldSolve]};
+      const physical = structuredClone(loaded.categories);
+      const forged = structuredClone(heldSolve);delete forged.reconstruction.orientation;
+      assert.equal((await put({...loaded,categoryTypesVersion:1,categories:[...physical,{...virtual,solves:[solve,forged]}],archivedCategories:[]})).status,400,"a hold that is not recorded cannot replay to a solve");
+      let response = await put({...loaded,categoryTypesVersion:1,categories:[...physical,virtual],archivedCategories:[]});
+      assert.equal(response.status,200);
+      let data = await response.json();
+      assert.deepEqual(data.categories[0].solves,loaded.categories[0].solves);
+      const virtualFile = data.categories.find(c=>c.id===virtual.id).file;
+      const portable = C.parseCSV(await readFile(path.join(dir,virtualFile),"utf8")).solves[0];
+      assert.deepEqual(portable.reconstruction,solve.reconstruction);
+      assert.deepEqual(C.parseCSV(await readFile(path.join(dir,virtualFile),"utf8")).solves[1].reconstruction,heldSolve.reconstruction);
+      response = await put({...data,categories:physical,archivedCategories:[data.categories.find(c=>c.id===virtual.id)]});
+      assert.equal(response.status,200);data=await response.json();
+      child.kill();await once(child,"exit");await start();
+      const archived = await get();
+      assert.equal(archived.categories.some(c=>c.id===virtual.id),false);
+      assert.deepEqual(archived.archivedCategories[0].solves[0].reconstruction,solve.reconstruction);
+      assert.equal(archived.categoryTypesVersion,1);
+      response=await put({...archived,categories:[...archived.categories,archived.archivedCategories[0]],archivedCategories:[]});
+      assert.equal(response.status,200);data=await response.json();
+      assert.equal(data.categories.at(-1).file,virtualFile);
+      const bad = structuredClone(data);bad.categories.at(-1).solves.push({...solve,id:"wrong-source",source:"physical"});
+      assert.equal((await put(bad)).status,400);
+      const malformed=structuredClone(data);malformed.categories.at(-1).solves[0].reconstruction.moves.at(-1).move="F";
+      assert.equal((await put(malformed)).status,400);
+      assert.deepEqual((await get()).categories.at(-1).solves[0].reconstruction,solve.reconstruction);
+    });
   } finally {
     if (child && child.exitCode === null) {
       child.kill();

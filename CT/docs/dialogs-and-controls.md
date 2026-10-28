@@ -22,8 +22,9 @@ Focus: showing a dialog hands focus to the dialog itself (not the close button),
 Group headings use `.group-label` (optionally with a `.group-value` span on the right). Round swatch choices (core, cross colour, colour theme) share the `.cube-cross-options` / `.cube-core-options` rules.
 
 Layout notes for the two big dialogs:
-- **Settings**: one scrollable list of groups (Timer, Cube, Video, Workspace) with a fade at the bottom and a pinned Done. Rows are whole-row targets with a hover tint and no rules between them; the Video options open under their switch, and the three Workspace links sit side by side. To add a setting, append a `toggleRow` to the right group's list in `settings()`.
+- **Settings**: one scrollable list of groups (Timer, Cube, Video, Workspace) with a fade at the bottom and a pinned Done. Rows are whole-row targets with a hover tint and no rules between them; the Video options open under their switch, and the three Workspace links sit side by side. To add a setting, append a `toggleRow` to the right group's list in `settings()`. Timer group: **Hide time while solving** (`pref.hideTimeWhileSolving`, default on) replaces the running time with `···` on the Timer, in Trainer rounds and on the virtual timer (`HIDDEN_TIME` in `tick()`, `ctx.hideTime()` in the playground); inspection counts and the final result are never hidden.
 - **Appearance**: a fixed-height grid (rail | divider | cube pane). The Core row also holds the **Floor shadow** switch on its right (`cube-floor-shadow`, a shared `toggleRow`). It is saved in `pref.cubeFloorShadow` (default on) and is *live*: it is not part of a cube's identity, so it never rebuilds a cube or shows the loading shell. `setFloorShadow()` in `cube-realistic.js` hides the floor plane on every live cube, and `loadCubeStudio()` in `app.js` applies the saved value the first time the renderer module loads, from any screen. Not in the Lighting studio yet. The Display mode tiles stretch to fill the rail; the cube pane aligns its first row with the rail's. Below 1050px wide or 720px tall everything stacks and the dialog scrolls as one.
+- **Cube playground**: the shared settings shell holds a 460px scrolling control column and a dedicated live cube preview on the right. The preview uses the same surface as the dialog, with a divider matching Appearance. Below 900px wide or 650px tall it stacks above the scrolling controls. Controls and both cube stages share saved view/zoom settings; see `cube-playground.md`.
 
 ## Shared controls and sizes
 
@@ -69,6 +70,12 @@ Every `<select>` is enhanced automatically (a MutationObserver watches the page,
 - Touch devices (`pointer: coarse`) keep the native picker. `.mobile-category` is `data-native` for the same reason.
 - `window.Dropdown.closeOpen()` closes an open menu and returns whether there was one; the dialog's `cancel` handler uses it.
 - Styles: the "dropdown" block in `style.css` (`.dd`, `.dd-trigger`, `.dd-menu`, `.dd-option`).
+
+## Floating popovers: `assets/popover.js`
+
+`FloatingPopover.create({ anchor, panel, floating, restoreFocus, onOpen, onClose })` returns `toggle()`, `close()`, `place()`, `destroy()` and an `open` getter. It shares the date picker's viewport fitting, outside-click dismissal (including clicks whose targets were repainted), trigger `aria-expanded`, resize handling and Escape behavior. Call `destroy()` when its owning screen or dialog is replaced. `closeOpen()` supports the app's dialog cancel handling.
+
+The Solve library uses relative positioning so its calendar's original appearance, animation and phone layout remain unchanged. `floating: true` is for pickers inside scrolling dialogs: the surface stays inside the modal and uses the Popover API's top layer, fixed viewport placement, above/below fitting, and repositioning on scroll. Tab dismisses a floating picker; Escape restores focus to its anchor and takes precedence over closing the surrounding dialog. Content owns its own arrow-key navigation. The playground's key-action picker uses this mode.
 
 ## Lighting studio
 

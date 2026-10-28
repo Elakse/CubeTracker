@@ -40,7 +40,7 @@ const server = http.createServer(async (req,res) => {
     await page.reload();
     await page.locator('.rank-card').waitFor();
     assert.match(await page.locator('.rank-title').innerText(),/Rusty sub 10s/);
-    assert.equal(library.categories.length,2);
+    assert.equal(library.categories.filter(c => c.type !== 'virtual').length,2);
     const before=JSON.stringify(library), beforeWrites=writes;
     await page.locator('[data-action="help"]').evaluate(e=>e.click());
     await page.locator('[data-action="effects-demo"]').click();

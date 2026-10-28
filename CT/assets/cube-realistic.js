@@ -1446,7 +1446,8 @@ export class RealisticCube {
         this.bodies.push({ mesh, p: [x, y, z] });
       }
       // The core becomes visible in the gaps while a layer turns.
-      this.root.add(new T.Mesh(this.geometry(cachedGeometry("core-sphere", () => new T.SphereGeometry(.73, 24, 16))), shell));
+      this.innerCore = new T.Mesh(this.geometry(cachedGeometry("core-sphere", () => new T.SphereGeometry(.73, 24, 16))), shell);
+      this.root.add(this.innerCore);
       // At detail quality every cap gets its own geometry: the same moulded
       // shape, but its own texture offset and tint, so 54 caps stop being copies.
       // Stickers use the same molded outline for every cell, but wear needs to
@@ -2595,8 +2596,23 @@ export class RealisticCube {
     if (this.markMaterial && coated) this.markMaterial.envMapIntensity = env;
     this.render();
   }
-  draw(stickers, spec, fraction) {
+  draw(stickers, spec, fraction, separation = null) {
     if (this.disposed) return;
+    const exploded = separation !== null;
+    if (this.surfaceExplosion !== exploded) {
+      this.surfaceExplosion = exploded;
+      this.innerCore.visible = !exploded;
+      if (this.floor) this.floor.visible = !exploded && FLOOR_SHADOW;
+      for (const {mesh} of this.bodies) mesh.visible = !exploded;
+      // Keep the actual caps, film, exposed surface rims and printed marks.
+      // Their backs become visible through the gaps without replacing materials.
+      for (const material of new Set([...this.faceMaterialValues(), this.holderMaterial, this.markMaterial].filter(Boolean))) {
+        material.userData.closedCubeSide ??= material.side;
+        material.side = exploded ? T.DoubleSide : material.userData.closedCubeSide;
+        material.needsUpdate = true;
+      }
+      this.canvas.dataset.surfaceExplosion = String(exploded);
+    }
     const q = spec ? new T.Quaternion().setFromAxisAngle(vector(spec.axis), spec.angle * fraction) : null;
     for (const { mesh, p } of this.bodies) {
       const moving = spec && spec.select(p);
@@ -2632,6 +2648,12 @@ export class RealisticCube {
         mesh.position.fromArray(p.map((v, j) => v + n[j] * cap));
         mesh.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(vector(right), vector(up), vector(n)));
       }
+      if (exploded) {
+        // Same per-sticker displacement as the CSS cube, in cubie units.
+        // Distinct face normals separate stickers sharing a corner or edge.
+        mesh.position.addScaledVector(vector(p), separation * .52 / 46)
+          .addScaledVector(vector(n), separation * .53 / 46);
+      }
       if (st.id.endsWith("4") && this.seams.length) {
         const seam = this.seams[center++];
         seam.position.copy(mesh.position).addScaledVector(vector(n), .079);
@@ -2649,7 +2671,9 @@ export class RealisticCube {
         if (this.markRoll) this.mark.quaternion.multiply(this.markRoll);
       }
     });
-    this.setMotion(spec, fraction);
+    // The solid cube's depth-based motion mask assumes packed cubie layers.
+    // Surface-only animation keeps the same geometric turns without that mask.
+    this.setMotion(exploded ? null : spec, fraction);
     this.invalidateShadow();
     this.render();
     // The trail belongs to this frame only. A resize or an environment landing
@@ -2711,6 +2735,33 @@ export class RealisticCube {
     this.invalidateShadow();
     this.render();
   }
+  setPlaygroundView(view) {
+    this.playgroundView = view;
+    if (!view || this.disposed) return;
+    this.root.rotation.set(T.MathUtils.degToRad(-view.pitch), T.MathUtils.degToRad(view.yaw), 0, "XYZ");
+    this.root.scale.setScalar(1);
+    this.updateProjection();
+    this.invalidateShadow();
+    this.render();
+  }
+  updateProjection() {
+    const width = this.stage.clientWidth, height = this.stage.clientHeight;
+    if (!width || !height) return;
+    this.camera.aspect = width / height;
+    if (this.playgroundView) {
+      const { perspective, pixelScale } = this.playgroundView;
+      // CSS perspective projects at P pixels with a cube unit of pixelScale.
+      // Matching both focal length and distance keeps orbit/zoom identical.
+      this.camera.position.set(0, 0, perspective / pixelScale);
+      this.camera.lookAt(0, 0, 0);
+      this.camera.fov = T.MathUtils.radToDeg(2 * Math.atan(height / (2 * perspective)));
+      this.camera.far = Math.max(100, this.camera.position.z + 50);
+      if (this.postMaterial?.uniforms.focus) this.postMaterial.uniforms.focus.value = this.camera.position.z - LENS.focus;
+    } else {
+      this.camera.fov = T.MathUtils.radToDeg(2 * Math.atan(2.65 / (9.93 * Math.min(1, this.camera.aspect))));
+    }
+    this.camera.updateProjectionMatrix();
+  }
   invalidateShadow() {
     if (this.settings.shadows) this.renderer.shadowMap.needsUpdate = true;
   }
@@ -2718,8 +2769,9 @@ export class RealisticCube {
   // own shading and self-shadowing alone: those come from the pieces and the key
   // light. The shadow map is untouched, so there is nothing to rebuild.
   setFloorShadow(on) {
-    if (!this.floor || this.floor.visible === on) return;
-    this.floor.visible = on;
+    const visible = on && !this.surfaceExplosion;
+    if (!this.floor || this.floor.visible === visible) return;
+    this.floor.visible = visible;
     this.render();
   }
   frameBudget(width, height) {
@@ -2816,10 +2868,7 @@ export class RealisticCube {
         this.blurMaterial.uniforms.texel.value.set(1 / halfWidth, 1 / halfHeight);
       }
     }
-    this.camera.aspect = width / height;
-    // Keep a comfortable margin on both the narrow timer and the large preview.
-    this.camera.fov = T.MathUtils.radToDeg(2 * Math.atan(2.65 / (9.93 * Math.min(1, this.camera.aspect))));
-    this.camera.updateProjectionMatrix();
+    this.updateProjection();
     this.render();
   }
   render() {

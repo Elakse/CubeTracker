@@ -498,8 +498,9 @@ and dark backgrounds. Run with `UV_QUALITY=cinematic`.
 ## The environment list
 
 Twelve entries behind `pref.cubeEnvironment`, with a control in Appearance: the
-generated `studio` rig, and eleven photographs. `studio` is the default and the
-only one that costs nothing to wait for; a photograph is fetched once, parsed to
+generated `studio` rig, and eleven photographs. `cabin` (Ship's cabin) is the app's
+default environment (`pref.cubeEnvironment`); `studio` is the renderer's built-in
+room and the only one that costs nothing to wait for; a photograph is fetched once, parsed to
 raw floats and prefiltered per cube, and a cube that cannot get its photograph
 falls back to the studio room with a console warning rather than leaving the
 stage transparent.

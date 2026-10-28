@@ -3,7 +3,8 @@
   "use strict";
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)],
-    C = CT;
+    C = CT,
+    V = CTVirtual;
   // Rank-card materials are decoration: without them (or without WebGL) the cards fall back to plain CSS.
   const Rank = typeof CTRank !== "undefined" ? CTRank : { layers: () => "", frame: level => level, mount() {}, unmount() {} };
   const paths = {
@@ -221,7 +222,7 @@
       cubePalette: "classic",
       cubeFinish: "standard",
       cubeQuality: "auto",
-      cubeEnvironment: "studio",
+      cubeEnvironment: "cabin",
       cubeWear: false,
       cubeFloorShadow: true,
       cubeCore: "black",
@@ -232,6 +233,7 @@
       libraryT: null,
       pressToStart: false,
       mouseClickStart: true,
+      hideTimeWhileSolving: true,
       videoRecording: false,
       videoRecordInspection: true,
       cameraDeviceId: "",
@@ -240,7 +242,7 @@
       videoMaxSeconds: 0,
       trainerSet: null,
       trainerView: "3d",
-      trainerSpeed: 72,
+      trainerSpeed: 80,
       trainerReps: 12,
       trainerMode: "random",
       version: 2,
@@ -261,6 +263,8 @@
     libraryCtl = null,       // the mounted library component, null on every other screen
     insightsCtl = null,      // the mounted insights component, null on every other screen
     insightsSeen = false,    // charts draw in once per visit to the Insights screen, not on every re-render
+    playCtl = null,
+    virtualSessions = new Map(),
     scene = null,
     drawerScene = null,
     appearanceScene = null,
@@ -361,7 +365,7 @@
   if (!Object.hasOwn(CUBE_PALETTES, pref.cubePalette)) pref.cubePalette = "classic";
   if (pref.cubeFinish === "realistic") pref.cubeFinish = "tiles";
   if (!Object.hasOwn(CUBE_MODELS, pref.cubeFinish)) pref.cubeFinish = "standard";
-  if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "studio";
+  if (!Object.hasOwn(CUBE_ENVIRONMENTS, pref.cubeEnvironment)) pref.cubeEnvironment = "cabin";
   if (typeof pref.cubeWear !== "boolean") pref.cubeWear = false;
   if (typeof pref.cubeFloorShadow !== "boolean") pref.cubeFloorShadow = true;
   if (!Object.hasOwn(CUBE_CORES, pref.cubeCore)) pref.cubeCore = "black";
@@ -375,6 +379,7 @@
   if (typeof pref.libraryGroup !== "boolean") pref.libraryGroup = true;
   if (!(Number(pref.libraryT) > 0)) pref.libraryT = null;
   if (typeof pref.mouseClickStart !== "boolean") pref.mouseClickStart = true;
+  if (typeof pref.hideTimeWhileSolving !== "boolean") pref.hideTimeWhileSolving = true;
   if (typeof pref.videoRecording !== "boolean") pref.videoRecording = false;
   if (typeof pref.videoRecordInspection !== "boolean") pref.videoRecordInspection = true;
   if (typeof pref.cameraDeviceId !== "string") pref.cameraDeviceId = "";
@@ -451,6 +456,31 @@
       state.categories[0] ||
       null
     );
+  }
+  const virtualTimer = () => view === "timer" && V.isVirtual(active()) && !demo;
+  function virtualSession(category = active()) {
+    if (!virtualSessions.has(category.id)) virtualSessions.set(category.id, new V.Attempt(C.scramble(), CUBE_CROSSES[pref.cubeCross].rotation));
+    return virtualSessions.get(category.id);
+  }
+  function saveVirtual(categoryId, result) {
+    const category = state.categories.find(c => c.id === categoryId);
+    if (!V.isVirtual(category)) return;
+    const solve = { ...result, id: uid(), date: new Date().toISOString(), note: "" };
+    category.solves.push(solve);
+    latestId = solve.id;
+    persist();
+    renderSidebar();
+  }
+  function addVirtualCategory() {
+    let category = state.categories.find(c => V.isVirtual(c) && c.puzzle === "3x3");
+    if (!category) {
+      state.archivedCategories ||= [];
+      const index = state.archivedCategories.findIndex(c => V.isVirtual(c) && c.puzzle === "3x3");
+      category = index >= 0 ? state.archivedCategories.splice(index, 1)[0] : { id: uid(), name: "3x3 Virtual", type: "virtual", puzzle: "3x3", solves: [] };
+      state.categories.push(category);
+      persist();
+    }
+    pref.active = category.id; demo = null; latestId = null; resetLibrary(); savePref(); render();
   }
   const algSets = () => state.algSets || [];
   const activeSet = () =>
@@ -666,6 +696,8 @@
               revision: state.revision,
               categories: snapshot,
               algSets: sets,
+              categoryTypesVersion: state.categoryTypesVersion,
+              archivedCategories: state.archivedCategories || [],
             }),
           });
           const data = await res.json();
@@ -706,17 +738,19 @@
     return saveChain;
   }
   let folderHandle = null,
+    folderManifestText = null,
     folderChain = Promise.resolve();
+  async function readFolderManifest(handle) {
+    try { return await (await handle.getFileHandle(".cubetracker.json")).getFile().then(file => file.text()); }
+    catch (error) { if (error.name === "NotFoundError") return null; throw error; }
+  }
   function saveFolder() {
     const generation = saveGeneration,
-      snapshot = state.categories.map((c) => ({
-        id: c.id,
-        name: c.name,
-        file: c.file,
-        solves: structuredClone(c.solves),
-      }));
+      metadata = structuredClone(state),
+      snapshot = metadata.categories;
     folderChain = folderChain.then(async () => {
       try {
+        if (await readFolderManifest(folderHandle) !== folderManifestText) throw new Error("This folder changed in another window. Reconnect before saving to protect both copies.");
         for (const c of snapshot) {
           const name =
             c.file ||
@@ -728,8 +762,15 @@
           await writable.write(C.exportCSV(c.solves));
           await writable.close();
           const live = state.categories.find((x) => x.id === c.id);
+          c.file = name;
           if (live) live.file = name;
         }
+        const manifestHandle = await folderHandle.getFileHandle(".cubetracker.json", { create: true });
+        const manifestWriter = await manifestHandle.createWritable();
+        const manifestText = JSON.stringify(metadata);
+        await manifestWriter.write(manifestText);
+        await manifestWriter.close();
+        folderManifestText = manifestText;
         if (generation === saveGeneration) dirty = false;
         writeError = false;
         cache();
@@ -757,10 +798,22 @@
         );
         return;
       }
-      folderHandle = await showDirectoryPicker({
+      const selectedFolder = await showDirectoryPicker({
         id: "cubetracker",
         mode: "readwrite",
       });
+      const manifestText = await readFolderManifest(selectedFolder);
+      if (manifestText) {
+        const saved = JSON.parse(manifestText), current = [...state.categories, ...(state.archivedCategories || [])];
+        const preservesExisting = [...(saved.categories || []), ...(saved.archivedCategories || [])].every(old => {
+          const local = current.find(c => c.id === old.id);
+          const records = new Map(local?.solves.map(s => [s.id, JSON.stringify(s)]));
+          return local && V.typeOf(local) === V.typeOf(old) && old.solves.every(s => records.get(s.id) === JSON.stringify(s));
+        });
+        if (!preservesExisting) throw new Error("This folder already has a different workspace. Open its launcher to preserve its full history.");
+      }
+      folderHandle = selectedFolder;
+      folderManifestText = manifestText;
       await persist();
       closeDialog();
       toast("Folder connected. Category CSVs will update after every change.");
@@ -775,14 +828,11 @@
   }
   function renderSidebar() {
     const cat = active();
-    $("#category-list").innerHTML =
-      state.categories
-        .map(
-          (c) =>
-            `<button class="category-item ${cat?.id === c.id && !demo ? "active" : ""}" data-category="${esc(c.id)}" title="${esc(c.name)}"><span class="category-dot"></span><span class="category-name">${esc(c.name)}</span><span class="category-count">${c.solves.length.toLocaleString()}</span></button>`,
-        )
-        .join("") ||
-      '<p class="category-empty">No categories yet.</p>';
+    const categoryButton = c => `<button class="category-item ${cat?.id === c.id && !demo ? "active" : ""}" data-category="${esc(c.id)}" title="${esc(c.name)}"><span class="category-dot"></span><span class="category-name">${esc(c.name)}</span><span class="category-count">${c.solves.length.toLocaleString()}</span></button>`;
+    const physical = state.categories.filter(c => !V.isVirtual(c)), virtual = state.categories.filter(V.isVirtual);
+    $("#category-list").innerHTML = physical.map(categoryButton).join("") +
+      '<div class="category-subheading">Virtual</div>' + virtual.map(categoryButton).join("") +
+      (virtual.some(c => c.puzzle === "3x3") ? "" : '<button class="add-category" data-action="virtual-category" title="Add or restore 3x3 Virtual">'+icon("plus")+'3x3 Virtual</button>');
     $$("[data-view]").forEach((b) => {
       b.classList.toggle("active", b.dataset.view === view);
       b.setAttribute(
@@ -798,7 +848,8 @@
     storageStatus();
   }
   function categorySelect() {
-    return `<select class="mobile-category" data-native aria-label="Active category" data-control="category">${demo ? "<option>Demo dataset</option>" : ""}${state.categories.map((c) => `<option value="${esc(c.id)}" ${c.id === active()?.id ? "selected" : ""}>${esc(c.name)}</option>`).join("") || "<option>No category</option>"}<option value="__new__">+ New category…</option></select>`;
+    const option = c => `<option value="${esc(c.id)}" ${c.id === active()?.id ? "selected" : ""}>${esc(c.name)}</option>`;
+    return `<select class="mobile-category" data-native aria-label="Active category" data-control="category">${demo ? "<option>Demo dataset</option>" : !active() ? '<option value="" disabled selected>No category</option>' : ""}<optgroup label="Categories">${state.categories.filter(c => !V.isVirtual(c)).map(option).join("")}</optgroup><optgroup label="Virtual">${state.categories.filter(V.isVirtual).map(option).join("")}${state.categories.some(V.isVirtual) ? "" : '<option value="__virtual__">+ 3x3 Virtual</option>'}</optgroup><option value="__new__">+ New category…</option></select>`;
   }
   function rangeSelect() {
     const r = String(currentRange()),
@@ -2423,6 +2474,8 @@ ${rankCard(status, true)}
     cancelPanelRefresh();
     if (!preserveEffects) cancelAnimationFrame(demoRaf);
     if (!timerBusy() && !preserveEffects) motion?.clear();
+    playCtl?.destroy();
+    playCtl = null;
     scene?.destroy();
     scene = null;
     lightingScene?.destroy();
@@ -2444,13 +2497,14 @@ ${rankCard(status, true)}
     releasePreview();
     Rank.unmount($("#main"));
     $("#chart-tooltip").hidden = true;
-    const focused = view === "timer" || view === "effects",
+    const virtual = virtualTimer(),
+      focused = (view === "timer" && !virtual) || view === "effects",
       inRound = view === "training",
-      immersive = focused || inRound || view === "lighting",
+      immersive = focused || inRound || view === "lighting" || virtual,
       scroll = keepPanel ? $("#solve-list")?.scrollTop || 0 : 0;
     if (!keepPanel) panelCount = PANEL_BATCH;
     keepPanel = false;
-    $("#main").innerHTML = view === "lighting"
+    $("#main").innerHTML = virtual ? CTCubePlay.page(icon, { name: active().name, virtual: true, categorySelect: categorySelect() }) : view === "lighting"
       ? lightingStudioPage()
       : inRound
       ? trainingPage()
@@ -2461,6 +2515,7 @@ ${rankCard(status, true)}
     document.body.classList.toggle("focus-mode", immersive);
     document.body.classList.toggle("timer-view", focused || inRound);
     document.body.classList.toggle("lighting-mode", view === "lighting");
+    document.body.classList.toggle("cube-play-view", virtual);
     document.body.classList.toggle("overview-view", view === "overview");
     document.body.classList.toggle("trainer-view", view === "trainer");
     renderSidebar();
@@ -2474,6 +2529,22 @@ ${rankCard(status, true)}
     }
     if (view === "lighting" && lightingState && $("#cube-lighting-studio"))
       lightingScene = new CubeScene($("#cube-lighting-studio"), "R R'", lightingState);
+    if (virtual) {
+      const category = active(), session = virtualSession(category);
+      playCtl = CTCubePlay.create($(".cube-play"), {
+      cube: V.cloneCube(session.cube), session, completed: result => saveVirtual(category.id, result),
+      settings: () => pref.cubePlay,
+      orientation: () => CUBE_CROSSES[pref.cubeCross].rotation,
+      hideTime: () => pref.hideTimeWhileSolving,
+      save: value => { pref.cubePlay = value; savePref(); },
+      speed: () => pref.trainerSpeed,
+      realistic: () => pref.cubeFinish !== "standard",
+      setSpeed: value => { pref.trainerSpeed = value; savePref(); },
+      esc, icon, group: settingsGroup, toggle: toggleRow, dialog: showDialog,
+      scene: (mount, gameplay) => new CubeScene(mount, "R R'", { ...pref, cubeFinish: gameplay.useAppCube ? pref.cubeFinish : "standard" }, { fixedOrientation: true, entrance: false, gameplay }),
+      release: (slot = "cube-play-mount") => cubeStudio?.discardCube(slot),
+    });
+    }
     attachLiveCamera();
     revealScramble();
     if (view === "effects") $("#demo-effect").value = demoEffect;
@@ -2550,12 +2621,14 @@ ${rankCard(status, true)}
 
   // Where one sticker sits, in the page's own 3D space. Shared so a still case
   // preview is the same cube as the interactive one, minus the scene around it.
-  function stickerMatrix(s) {
+  function stickerMatrix(s, separation = null) {
     const css = (v) => [v[0], -v[1], v[2]],
       r = css(s.right),
       d = css(s.down),
       n = css(s.n),
-      p = css(s.p.map((v, j) => v * 46 + s.n[j] * 23));
+      step = 46 + (separation ?? 0) * .52,
+      plane = 69 + (separation ?? 0) * 1.05,
+      p = css(s.p.map((v, j) => v * step + s.n[j] * (plane - step)));
     return `matrix3d(${[...r, 0, ...d, 0, ...n, 0, ...p, 1]
       .map((v) => (Math.abs(v) < 1e-9 ? 0 : v))
       .join(",")})`;
@@ -2608,6 +2681,7 @@ ${rankCard(status, true)}
   class CubeScene {
     constructor(mount, alg, appearance = null, options = {}) {
       this.mount = mount;
+      this.gameplay = options.gameplay || null;
       this.alg = alg;
       this.appearance = appearance || pref;
       this.isStudio = options.studio ?? Boolean(appearance);
@@ -2671,7 +2745,7 @@ ${rankCard(status, true)}
       // animation off the cube still materializes, it just appears already
       // scrambled. Tying the two together is what made the focus cube pop in
       // with no spawn animation whenever the preference was off.
-      this.materializes = true;
+      this.materializes = !this.gameplay;
       this.world = $(".cube-world", mount);
       this.elements = this.cube.stickers.map((s) => {
         const el = document.createElement("div");
@@ -2817,6 +2891,7 @@ ${rankCard(status, true)}
     }
     draw(spec = null, fraction = 0, crossOverride = null, specAlreadyOriented = false) {
       if (this.invalid || this.disposed) return;
+      this.onDraw?.(spec, fraction);
       if (this.mode === "net") {
         this.drawNet();
         return;
@@ -2825,7 +2900,8 @@ ${rankCard(status, true)}
         stickers = orientedStickers(this.cube.stickers, cross),
         shownSpec = specAlreadyOriented ? spec : orientedMoveSpec(spec, cross);
       if (this.realistic) {
-        this.realistic.draw(stickers, shownSpec, fraction);
+        this.realistic.draw(stickers, shownSpec, fraction,
+          this.gameplay?.useAppCube && this.gameplay.explodeAppCube ? this.gameplay.separation : null);
         return;
       }
       stickers.forEach((st, i) => {
@@ -2835,11 +2911,12 @@ ${rankCard(status, true)}
           for (const k of ["p", "n", "right", "down"])
             s[k] = C.rotate(st[k], shownSpec.axis, shownSpec.angle * fraction);
         }
-        this.elements[i].style.transform = stickerMatrix(s);
+        this.elements[i].style.transform = stickerMatrix(s, this.gameplay && (!this.gameplay.useAppCube || this.gameplay.explodeAppCube) ? this.gameplay.separation : null);
       });
     }
     orbit() {
-      this.realistic?.orbit(this.pitch, this.yaw, this.zoom);
+      if (this.gameplay && this.projection) this.realistic?.setPlaygroundView({ ...this.projection, pitch: this.pitch, yaw: this.yaw });
+      else this.realistic?.orbit(this.pitch, this.yaw, this.zoom);
       if (this.world)
         this.world.style.transform = `scale3d(${this.zoom},${this.zoom},${this.zoom}) rotateX(${this.pitch}deg) rotateY(${this.yaw}deg)`;
     }
@@ -2932,6 +3009,7 @@ ${rankCard(status, true)}
       }, delay);
     }
     bind() {
+      if (this.gameplay) return; // View controls live in settings; rotations are engine moves.
       this.stage.addEventListener("pointerdown", (e) => {
         if (e.target.closest("button")) return;
         this.press = { x: e.clientX, y: e.clientY, moved: false };
@@ -3167,7 +3245,7 @@ ${rankCard(status, true)}
       el.innerHTML = s.moves
         .map(
           (m, i) =>
-            `<button class="${i < s.index ? "done " : ""}${i === s.index - 1 ? "current" : ""}" data-move="${i + 1}" aria-label="Show cube after move ${i + 1}: ${esc(m)}">${esc(m)}</button>`,
+            `<button class="${i < s.index ? "done " : ""}${i === s.index - 1 ? "current" : ""}" data-move="${i + 1}" title="${s.reconstructionEvents ? (i < s.reconstructionInspectionCount ? "Inspection rotation" : `${(s.reconstructionEvents[i].atMs / 1000).toFixed(3)}s`) : esc(m)}" aria-label="Show cube after move ${i + 1}: ${esc(m)}">${esc(m)}</button>`,
         )
         .join("");
     const play = $('[data-cube="play"]', root);
@@ -3175,7 +3253,7 @@ ${rankCard(status, true)}
       play.innerHTML = icon(s.playing ? "pause" : "play");
       play.setAttribute(
         "aria-label",
-        s.playing ? "Pause scramble" : "Play scramble",
+        s.playing ? "Pause playback" : s.reconstructionEvents ? "Play reconstruction" : "Play scramble",
       );
     }
   }
@@ -3748,7 +3826,7 @@ ${rankCard(status, true)}
         }[phase] || "";
   }
   function beginHold() {
-    if (!["timer", "training"].includes(view) || $("#dialog").open) return;
+    if (!["timer", "training"].includes(view) || virtualTimer() || $("#dialog").open) return;
     const drilling = view === "training";
     if (!drilling && scramblePending) {
       toast("Preparing scramble…");
@@ -3830,10 +3908,12 @@ ${rankCard(status, true)}
       $("#timer-instruction").textContent = "Any key to stop";
     tick();
   }
+  // Shown in place of the running time when "Hide time while solving" is on.
+  const HIDDEN_TIME = "···";
   function tick() {
     if (timer.phase !== "running") return;
     timer.elapsed = performance.now() - timer.start;
-    $("#timer-digits").textContent = fmt(timer.elapsed / 1000);
+    $("#timer-digits").textContent = pref.hideTimeWhileSolving ? HIDDEN_TIME : fmt(timer.elapsed / 1000);
     timer.raf = requestAnimationFrame(tick);
   }
   function inspectionTick() {
@@ -3856,6 +3936,7 @@ ${rankCard(status, true)}
   // Inspection past 17 seconds is a DNF: record it and be ready for the next
   // attempt, rather than leaving the timer waiting for a key.
   function inspectionDNF() {
+    if (V.isVirtual(active())) return;
     const before = recordProfile();
     cancelAnimationFrame(timer.raf);
     clearTimeout(timer.hold);
@@ -3867,6 +3948,7 @@ ${rankCard(status, true)}
       penalty: "DNF",
       scramble: currentScramble,
       invalidScramble: scrambleInvalid(),
+      source: "physical",
       date: new Date().toISOString(),
       note: "",
     };
@@ -3894,6 +3976,7 @@ ${rankCard(status, true)}
       finishTrainingAttempt();
       return;
     }
+    if (V.isVirtual(active())) return;
     const rawMs = Math.floor((performance.now() - timer.start) / 10) * 10;
     cancelAnimationFrame(timer.raf);
     const before = recordProfile();
@@ -3903,6 +3986,7 @@ ${rankCard(status, true)}
       penalty: timer.penalty,
       scramble: currentScramble,
       invalidScramble: scrambleInvalid(),
+      source: "physical",
       date: new Date().toISOString(),
       note: "",
     };
@@ -3984,6 +4068,7 @@ ${rankCard(status, true)}
   document.addEventListener("keydown", (e) => {
     if ($("#dialog").open || (timer.phase !== "running" && editable(e.target)))
       return;
+    if (virtualTimer()) return;
     if (e.key === "Escape" && $(".activity-popover:not([hidden])")) {
       closeActivityPopover();
       return;
@@ -4172,7 +4257,7 @@ ${rankCard(status, true)}
           scramblePending = false;
           currentScramble = C.scramble();
           scrambleSource = "practice";
-          render(true);
+          if (!virtualTimer()) render(true);
         }
         toast(
           "Using random-move practice scrambles. The random-state generator is unavailable.",
@@ -4189,7 +4274,7 @@ ${rankCard(status, true)}
           currentScramble = e.data.algorithm;
           scrambleSource = "random-state";
           scramblePending = false;
-          render(true);
+          if (!virtualTimer()) render(true);
           scrambleWorker.postMessage({ generate: true });
         } else scrambleQueue.push(e.data.algorithm);
       };
@@ -4319,6 +4404,7 @@ ${rankCard(status, true)}
   let dialogCloseTimer = 0,
     cubeApplyTimer = 0;
   function showDialog(title, body, cls = "") {
+    playCtl?.closeSettings();
     motion?.clear();
     disposeSolveVideoUrl();
     averageDrawer = null;
@@ -4398,6 +4484,7 @@ ${rankCard(status, true)}
       toggleStudioConfirmation(false);
       return;
     }
+    if (window.FloatingPopover?.closeOpen()) return;
     if (window.Dropdown?.closeOpen()) return;
     closeDialog();
   });
@@ -4432,7 +4519,7 @@ ${rankCard(status, true)}
           "A category with this name already exists.";
         return;
       }
-      const c = { id: uid(), name, solves: [] };
+      const c = { id: uid(), name, type: "physical", solves: [] };
       state.categories.push(c);
       pref.active = c.id;
       demo = null;
@@ -4481,6 +4568,8 @@ ${rankCard(status, true)}
           "Please split CSV files larger than 50 MB before importing.",
         );
       const result = C.parseCSV(await file.text());
+      result.solves.forEach(V.validateReconstruction);
+      const incomingVirtual = result.solves.some(solve => solve.source === "virtual");
       showDialog(
         "Import CSV",
         `<p><strong>${result.solves.length.toLocaleString()} solves</strong> found in ${esc(file.name)}.</p>${result.missingDates || result.unsupported ? `<p class="inline-warning">${result.missingDates ? `${result.missingDates} solve(s) have unknown dates and will be excluded from calendar views. ` : ""}${result.unsupported ? `${result.unsupported} scramble(s) use unsupported notation; their original text will be kept.` : ""}</p>` : ""}<form id="import-form"><label class="field">Import into<select name="destination"><option value="new">Create a new category</option>${state.categories.map((c) => `<option value="${esc(c.id)}">Append to ${esc(c.name)}</option>`).join("")}</select></label><label class="field" id="import-name-label">New category name<input name="name" maxlength="80" value="${esc(file.name.replace(/\.csv$/i, ""))}" required></label><p class="chart-note">Existing solves are kept. Exact matches on date, time, penalty, and scramble are skipped when appending.</p><div class="error-text" id="form-error"></div><div class="dialog-actions"><button class="btn btn-quiet" type="button" data-action="close-dialog">Cancel</button><button class="btn btn-dark" type="submit">Import solves ${icon("arrow")}</button></div></form>`,
@@ -4495,6 +4584,7 @@ ${rankCard(status, true)}
           name = e.target.elements.name.value.trim();
         let cat;
         if (dest === "new") {
+          if (incomingVirtual) { $("#form-error").textContent = "Choose 3x3 Virtual to keep virtual solves in their own category."; return; }
           if (!name) return;
           if (
             state.categories.some(
@@ -4505,9 +4595,10 @@ ${rankCard(status, true)}
               "Use a different name or append to the existing category.";
             return;
           }
-          cat = { id: uid(), name, solves: [] };
+          cat = { id: uid(), name, type: "physical", solves: [] };
           state.categories.push(cat);
         } else cat = state.categories.find((c) => c.id === dest);
+        if (!cat || (incomingVirtual && !V.isVirtual(cat))) { $("#form-error").textContent = "Choose a virtual category for these solves."; return; }
         const key = (s) =>
             JSON.stringify([
               s.date || s.originalDate,
@@ -4522,6 +4613,7 @@ ${rankCard(status, true)}
             skipped++;
             continue;
           }
+          if (V.isVirtual(cat)) s.source = "virtual";
           cat.solves.push(s);
           seen.add(key(s));
         }
@@ -4562,6 +4654,7 @@ ${rankCard(status, true)}
         const s = {
           id: uid(),
           ...time,
+          source: V.typeOf(active()),
           scramble: alg,
           date: new Date().toISOString(),
           note: "",
@@ -4585,6 +4678,7 @@ ${rankCard(status, true)}
     if (!s) return;
     $("#chart-tooltip").hidden = true;
     const i = solves().indexOf(s),
+      reconstruction = s.reconstruction?.moves?.length ? s.reconstruction : null,
       hasVideo = Boolean(s.video),
       videoWidth = Math.max(1, Number(s.video?.width) || 16),
       videoHeight = Math.max(1, Number(s.video?.height) || 9),
@@ -4593,12 +4687,16 @@ ${rankCard(status, true)}
         : "";
     showDialog(
       `Solve #${i + 1}`,
-      `<div class="detail-grid${hasVideo ? " has-video" : ""}"><div class="detail-visuals">${videoPane}<div class="detail-cube"><div id="drawer-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="Show solved cube">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="Play scramble">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="Show full scramble">${icon("last")}</button></div></div></div><div class="detail-side"><div class="detail-time">${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}</div><div class="detail-meta"><span>${esc(longDate(s))}</span><span>${esc(active().name)}</span></div>${s.invalidScramble ? `<p class="scramble-warning detail-warning" role="status">${icon("warning")}<span>This scramble is not valid for records. The solve is flagged.</span></p>` : ""}<div class="detail-actions">${resultControls(s)}</div><div class="scramble-line" data-copyable><button class="icon-btn copy-inline" data-action="copy" aria-label="Copy scramble">${icon("copy")}</button><div id="scramble-notation" class="scramble-tokens"></div></div><label class="field">Note<textarea class="detail-note" id="solve-note" maxlength="2000" rows="3" placeholder="Add a note"></textarea></label></div></div>`,
+      `<div class="detail-grid${hasVideo ? " has-video" : ""}"><div class="detail-visuals">${videoPane}<div class="detail-cube"><div id="drawer-cube"></div><div class="playback"><button class="icon-btn" data-cube="first" aria-label="${reconstruction ? "Show starting scramble" : "Show solved cube"}">${icon("first")}</button><button class="icon-btn" data-cube="prev" aria-label="Previous move">${icon("left")}</button><button class="icon-btn play-btn" data-cube="play" aria-label="${reconstruction ? "Play reconstruction" : "Play scramble"}">${icon("play")}</button><button class="icon-btn" data-cube="next" aria-label="Next move">${icon("chevron")}</button><button class="icon-btn" data-cube="last" aria-label="${reconstruction ? "Show solved cube" : "Show full scramble"}">${icon("last")}</button></div></div></div><div class="detail-side"><div class="detail-time">${fmt(C.value(s))}${s.penalty === "+2" ? "+" : ""}</div><div class="detail-meta"><span>${esc(longDate(s))}</span><span>${esc(active().name)}</span></div>${s.invalidScramble ? `<p class="scramble-warning detail-warning" role="status">${icon("warning")}<span>This scramble is not valid for records. The solve is flagged.</span></p>` : ""}<div class="detail-actions">${resultControls(s)}</div>${reconstruction ? `<div class="reconstruction-setup"><h3 class="group-label">Scramble</h3><p data-copyable>${esc(s.scramble)}</p><h3 class="group-label">Reconstruction</h3></div>` : ""}<div class="scramble-line" data-copyable><button class="icon-btn copy-inline" data-action="${reconstruction ? "copy-reconstruction" : "copy"}" aria-label="${reconstruction ? "Copy reconstruction" : "Copy scramble"}">${icon("copy")}</button><div id="scramble-notation" class="scramble-tokens"></div></div><label class="field">Note<textarea class="detail-note" id="solve-note" maxlength="2000" rows="3" placeholder="Add a note"></textarea></label></div></div>`,
       `solve-detail${hasVideo ? " solve-detail-video" : ""}`,
     );
     drawerId = id;
     $("#solve-note").value = s.note || "";
-    drawerScene = new CubeScene($("#drawer-cube"), s.scramble);
+    drawerScene = reconstruction
+      ? new CubeScene($("#drawer-cube"), reconstruction.moves.map(event => event.move).join(" "), null, { setup: [s.scramble, reconstruction.orientation].filter(Boolean).join(" "), fixedOrientation: true, speed: pref.trainerSpeed })
+      : new CubeScene($("#drawer-cube"), s.scramble);
+    drawerScene.reconstructionEvents = reconstruction?.moves;
+    drawerScene.reconstructionInspectionCount = reconstruction?.inspectionCount || 0;
     if (pref.cubeMode === "net") drawerScene.setMode("net");
     drawerScene.onChange = updateNotation;
     if (drawerScene.invalid)
@@ -4671,6 +4769,7 @@ ${rankCard(status, true)}
         ["reward-animations", pref.rewardAnimations, "Reward animations", "Effects for records, titles and rust, and the moving rank cards. Off keeps everything still."],
         ["press-start", pref.pressToStart, "Start on a single press", "Skip the 350 ms hold: one press starts, the next stops."],
         ["mouse-click-start", pref.mouseClickStart, "Allow mouse clicks to start", "Off means only keyboard and touch can start an attempt."],
+        ["hide-time", pref.hideTimeWhileSolving, "Hide time while solving", "Show dots instead of the running time. The result appears when you stop."],
       ],
       cube = [
         ["scramble-animation", pref.scrambleAnimation, "Scramble animation", "Show the cube solved, then turn through the scramble."],
@@ -4910,6 +5009,7 @@ ${rankCard(status, true)}
   // Apply the selected settings after carousel input settles, or immediately
   // when a setting control changes.
   function applyCubeSelection(crossFrom = null) {
+    playCtl?.refresh();
     updateCubeSelectionUI();
     scene?.setAppearance();
     drawerScene?.setAppearance();
@@ -4975,7 +5075,7 @@ ${rankCard(status, true)}
     if (!c || demo) return;
     showDialog(
       "Delete category",
-      `<p>Delete <strong>${esc(c.name)}</strong> and its ${c.solves.length.toLocaleString()} solve${c.solves.length === 1 ? "" : "s"} from this workspace?</p><p>${c.file ? `<code>${esc(c.file)}</code> stays in your folder, so you can import it again later.` : "Nothing has been written to a folder for this category yet."}</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-danger" data-action="confirm-delete-category">${icon("trash")}Delete category</button></div>`,
+      `<p>Delete <strong>${esc(c.name)}</strong> and its ${c.solves.length.toLocaleString()} solve${c.solves.length === 1 ? "" : "s"} from this workspace?</p><p>${V.isVirtual(c) ? "Its complete history, including reconstructions, is kept. Add 3x3 Virtual again to restore it." : c.file ? `<code>${esc(c.file)}</code> stays in your folder, so you can import it again later.` : "Nothing has been written to a folder for this category yet."}</p><div class="dialog-actions"><button class="btn btn-quiet" data-action="close-dialog">Cancel</button><button class="btn btn-danger" data-action="confirm-delete-category">${icon("trash")}Delete category</button></div>`,
     );
   }
   function deleteCategory() {
@@ -4984,7 +5084,11 @@ ${rankCard(status, true)}
     const idx = state.categories.findIndex((x) => x.id === c.id);
     if (idx < 0) return;
     const [removed] = state.categories.splice(idx, 1);
-    removed.solves.forEach((solve) => scheduleVideoDeletion(solve.id));
+    if (V.isVirtual(removed)) {
+      state.archivedCategories ||= [];
+      state.archivedCategories.push(removed);
+      virtualSessions.delete(removed.id);
+    } else removed.solves.forEach((solve) => scheduleVideoDeletion(solve.id));
     pref.active = state.categories[Math.min(idx, state.categories.length - 1)]?.id || null;
     latestId = null;
     resetLibrary();
@@ -4995,6 +5099,12 @@ ${rankCard(status, true)}
     toast(`${removed.name} removed.`, false, {
       label: "Undo",
       run: () => {
+        if (state.categories.some(c => c.id === removed.id)) return;
+        if (V.isVirtual(removed) && state.categories.some(c => V.isVirtual(c) && c.puzzle === removed.puzzle)) {
+          toast("A virtual category is already active. Its history was kept.");
+          return;
+        }
+        state.archivedCategories = (state.archivedCategories || []).filter(c => c.id !== removed.id);
         removed.solves.forEach((solve) => cancelVideoDeletion(solve.id));
         state.categories.splice(Math.min(idx, state.categories.length), 0, removed);
         pref.active = removed.id;
@@ -5347,6 +5457,7 @@ ${rankCard(status, true)}
         if (demo || !active()) openCategory();
         break;
       case "category":
+        if (timerBusy()) { e.target.value = active()?.id || ""; return; }
         openCategory();
         break;
       case "import":
@@ -5363,6 +5474,9 @@ ${rankCard(status, true)}
         break;
       case "copy":
         copyScramble();
+        break;
+      case "copy-reconstruction":
+        copyText(solves().find(s => s.id === drawerId)?.reconstruction?.moves.map(event => event.move).join(" ") || "");
         break;
       case "close-dialog":
         closeDialog();
@@ -5442,6 +5556,9 @@ ${rankCard(status, true)}
       case "retry-save":
         await persist();
         if (!writeError) closeDialog();
+        break;
+      case "virtual-category":
+        addVirtualCategory();
         break;
       case "settings":
         settings();
@@ -5624,6 +5741,7 @@ ${rankCard(status, true)}
         playDemoEffect();
         return;
       case "alg-set":
+        if (e.target.value === "__virtual__") { addVirtualCategory(); return; }
         if (e.target.value === "__new__") {
           e.target.value = activeSet()?.id || "";
           newSet();
@@ -5695,6 +5813,9 @@ ${rankCard(status, true)}
         break;
       case "mouse-click-start":
         pref.mouseClickStart = e.target.checked;
+        break;
+      case "hide-time":
+        pref.hideTimeWhileSolving = e.target.checked;
         break;
     }
     savePref();
@@ -5787,7 +5908,14 @@ ${rankCard(status, true)}
       )
     )
       view = initial;
-    if (seedAlgSets()) persist();
+    const migratedCategories = V.initialize(state, uid);
+    if (initial === "play") {
+      view = "timer";
+      pref.active = state.categories.find(V.isVirtual)?.id || pref.active;
+      history.replaceState(null, "", "#timer");
+    }
+    if (!pref.active) pref.active = state.categories[0]?.id || null;
+    if (seedAlgSets() || migratedCategories) persist();
     savePref();
     startScrambler();
     await loadingPaint;

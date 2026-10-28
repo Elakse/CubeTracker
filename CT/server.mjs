@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url),
-  CT = require("./assets/core.js");
+  CT = require("./assets/core.js"),
+  V = require("./assets/virtual.js");
 const root = path.dirname(fileURLToPath(import.meta.url)),
   port = Number(process.env.CT_PORT || 4173),
   manifest = path.join(root, ".cubetracker.json"),
@@ -20,8 +21,11 @@ const root = path.dirname(fileURLToPath(import.meta.url)),
   // cannot get from a stale process — `environments` is the asset allowlist
   // that carries the current reflection-photograph allowlist (3 added
   // /assets/dropdown.js and /assets/slider.js; 4 added the reward files
-  // rank-cards.css/js and reward-fx.js; 5 added /assets/scrollbars.css).
-  capabilities = { video: 1, environments: 5, surfaces: 2, environmentTuning: 2 };
+  // rank-cards.css/js and reward-fx.js; 5 added /assets/scrollbars.css;
+  // 6 adds the keyboard playground and reusable floating popover;
+  // 7 adds the shared virtual category/timing schema used by page and saver;
+  // 8 adds the optional reconstruction `orientation` the saver must validate).
+  capabilities = { video: 1, environments: 8, surfaces: 2, environmentTuning: 2 };
 let queue = Promise.resolve();
 const TUNING_LIMITS = {
   exposure: [.3, 1.6],
@@ -298,9 +302,11 @@ async function save(body) {
   if (!Array.isArray(body.categories) || body.categories.length > 200)
     throw new Error("Invalid categories.");
   const algSets = readAlgSets(body.algSets, previous.algSets);
-  const ids = new Set(),
-    categories = [];
-  for (const c of body.categories) {
+  const archives = body.archivedCategories ?? previous.archivedCategories ?? [];
+  if (!Array.isArray(archives) || archives.length > 200) throw new Error("Invalid category archive.");
+  const ids = new Set(), categories = [], oldCategories = [...previous.categories, ...(previous.archivedCategories || [])];
+  if (body.categories.filter(c => V.isVirtual(c) && c.puzzle === "3x3").length > 1) throw new Error("Only one 3x3 virtual category is supported.");
+  for (const c of [...body.categories, ...archives]) {
     if (
       typeof c.id !== "string" ||
       !/^[\w-]{1,80}$/.test(c.id) ||
@@ -313,6 +319,10 @@ async function save(body) {
     )
       throw new Error("Invalid category.");
     ids.add(c.id);
+    const oldCategory = oldCategories.find(x => x.id === c.id), type = c.type || oldCategory?.type || "physical";
+    const oldSolves = new Map(oldCategory?.solves.map(s => [s.id, s]));
+    if (!Object.hasOwn(V.TYPES, type) || (type === "virtual" && c.puzzle !== "3x3")) throw new Error("Invalid category type.");
+    if (oldCategory && V.typeOf(oldCategory) !== type) throw new Error("A category type cannot be changed.");
     for (const s of c.solves) {
       if (
         typeof s.id !== "string" ||
@@ -344,8 +354,14 @@ async function save(body) {
           s.video.fps > 240)
       )
         throw new Error("Invalid solve video.");
+      if (s.source != null && !["physical", "virtual"].includes(s.source)) throw new Error("Invalid solve source.");
+      if (s.source && s.source !== type) throw new Error("Solve source does not match its category.");
+      if (type === "virtual" && !oldSolves.has(s.id) && s.source !== "virtual") throw new Error("Virtual solves require an explicit source.");
+      if (s.reconstruction != null && type !== "virtual") throw new Error("Reconstruction requires a virtual category.");
+      const saved = oldSolves.get(s.id);
+      if (!saved || saved.scramble !== s.scramble || saved.rawMs !== s.rawMs || JSON.stringify(saved.reconstruction) !== JSON.stringify(s.reconstruction)) V.validateReconstruction(s);
     }
-    const old = previous.categories.find((x) => x.id === c.id);
+    const old = oldCategories.find((x) => x.id === c.id);
     const slug =
       c.name
         .normalize("NFKD")
@@ -355,8 +371,10 @@ async function save(body) {
     const file = old?.file || `${slug}-${c.id.slice(0, 8)}.csv`;
     if (path.basename(file) !== file || !file.endsWith(".csv"))
       throw new Error("Invalid filename.");
-    categories.push({ id: c.id, name: c.name.trim(), file, solves: c.solves });
+    categories.push({ id: c.id, name: c.name.trim(), file, type, ...(c.puzzle ? {puzzle:c.puzzle} : {}), solves: c.solves });
   }
+  const archivedCategories = categories.splice(body.categories.length);
+  if (archivedCategories.some(c => !V.isVirtual(c))) throw new Error("Only virtual histories use the category archive.");
   await mkdir(path.join(root, "backups"), { recursive: true });
   for (const c of categories) {
     const file = path.join(root, c.file),
@@ -378,6 +396,8 @@ async function save(body) {
     revision: previous.revision + 1,
     categories,
     algSets,
+    categoryTypesVersion: body.categoryTypesVersion || previous.categoryTypesVersion || 0,
+    archivedCategories,
   };
   await atomic(manifest, JSON.stringify(result));
   return result;
@@ -492,10 +512,14 @@ const server = http.createServer(async (req, res) => {
       ![
         "/CTU.html",
         "/assets/core.js",
+        "/assets/virtual.js",
         "/assets/timer-effects.js",
         "/assets/rank-cards.js",
         "/assets/reward-fx.js",
         "/assets/rank-cards.css",
+        "/assets/popover.js",
+        "/assets/cube-play.js",
+        "/assets/cube-play.css",
         "/assets/library.js",
         "/assets/library.css",
         "/assets/insights.js",

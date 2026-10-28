@@ -8,6 +8,6 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/core.test.cjs tests/timer.test.cjs tests/effects.test.cjs tests/trainer.test.cjs tests/server.test.mjs"
+    "test": "node --test tests/core.test.cjs tests/timer.test.cjs tests/virtual.test.cjs tests/effects.test.cjs tests/trainer.test.cjs tests/server.test.mjs"
   }
 }

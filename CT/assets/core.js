@@ -223,9 +223,26 @@
         } catch {
           unsupported++;
         }
+        const extra = {};
+        const sourceIndex = header.indexOf("source"), reconstructionIndex = header.indexOf("reconstruction");
+        const rawIndex = header.indexOf("rawms");
+        if (rawIndex >= 0 && row[rawIndex] !== "") {
+          const rawMs = Number(row[rawIndex]);
+          if (!Number.isInteger(rawMs) || rawMs < 0 || rawMs > 86400000 || (time.penalty !== "DNF" && rawMs !== time.rawMs)) throw new Error("Invalid underlying time.");
+          time.rawMs = rawMs;
+        }
+        if (sourceIndex >= 0 && row[sourceIndex]) {
+          if (!["physical", "virtual"].includes(row[sourceIndex])) throw new Error("Invalid solve source.");
+          extra.source = row[sourceIndex];
+        }
+        if (reconstructionIndex >= 0 && row[reconstructionIndex]) {
+          extra.reconstruction = JSON.parse(row[reconstructionIndex]);
+          extra.source = "virtual";
+        }
         solves.push({
           id: root.crypto.randomUUID(),
           ...time,
+          ...extra,
           scramble: alg,
           date: Number.isFinite(dateMs) ? new Date(dateMs).toISOString() : null,
           originalDate,
@@ -262,8 +279,9 @@
   }
   const csvEscape = (s) => '"' + String(s ?? "").replace(/"/g, '""') + '"';
   function exportCSV(solves) {
+    const virtual = solves.some(s => s.source === "virtual" || s.reconstruction);
     return (
-      "Index,Time,Scramble,Date\r\n" +
+      "Index,Time,Scramble,Date" + (virtual ? ",Source,Reconstruction,RawMs" : "") + "\r\n" +
       solves
         .map((s, i) => ({ s, i }))
         .reverse()
@@ -273,7 +291,7 @@
             s.penalty === "DNF"
               ? "DNF"
               : value(s).toFixed(digits) + (s.penalty === "+2" ? "+" : "");
-          return [i + 1, time, s.scramble, s.originalDate || s.date || ""]
+          return [i + 1, time, s.scramble, s.originalDate || s.date || "", ...(virtual ? [s.source || "physical", s.reconstruction ? JSON.stringify(s.reconstruction) : "", s.rawMs] : [])]
             .map(csvEscape)
             .join(",");
         })

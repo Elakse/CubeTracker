@@ -423,25 +423,19 @@
         ref("calInfo").innerHTML = p.anchor ? "Pick the last day" : `<b>${inRange.toLocaleString()}</b> ${inRange === 1 ? "solve" : "solves"} in range`;
         ref("calClear").style.visibility = st.range === "any" ? "hidden" : "visible";
       }
-      function toggle(open = !p.open) {
-        p.open = open;
-        pop.classList.toggle("open", open);
-        ref("dateBtn").setAttribute("aria-expanded", String(open));
-        if (open) {
+      const surface = window.FloatingPopover.create({
+        anchor: ref("dateBtn"), panel: pop,
+        onOpen() {
+          p.open = true;
           const [a, b] = rangeBounds(st, now()), at = b || a;
           month = firstOfMonth(at ? parseISO(at) : new Date(now()));
           p.anchor = null; hover = null;
           paint(false);
-          fit();
-        }
-      }
-      // keep the popover inside the window: start at the button's left edge, then slide left just enough to fit
-      function fit() {
-        pop.style.left = "";
-        const wrap = pop.parentElement.getBoundingClientRect();   // offsetWidth, not a rect: the popover is mid-transform while it opens
-        const shift = Math.min(0, innerWidth - 8 - (wrap.left + pop.offsetWidth));
-        pop.style.left = Math.max(shift, 8 - wrap.left) + "px";
-      }
+        },
+        onClose() { p.open = false; },
+      });
+      cleanups.push(() => surface.destroy());
+      const toggle = (open = !p.open) => surface.toggle(open);
       on(ref("dateBtn"), "click", () => toggle());
       on(ref("prevM"), "click", () => { month = new Date(month.getFullYear(), month.getMonth() - 1, 1); paint(true, -1); });
       on(ref("nextM"), "click", () => { month = new Date(month.getFullYear(), month.getMonth() + 1, 1); paint(true, 1); });
@@ -509,7 +503,6 @@
         rows[i].scrollIntoView({ block: "nearest" });
       } else if ((e.key === "Enter" || e.key === " ") && active?.classList?.contains("lib-row")) { e.preventDefault(); active.click(); }
     });
-    on(document, "click", (e) => { if (picker.open && e.target.isConnected && !e.target.closest(".lib-datewrap")) picker.toggle(false); });   // a day cell is repainted on click and is no longer attached: that click was inside
     on(window, "resize", placeThumb);
 
     /* ---- infinite scroll ---- */

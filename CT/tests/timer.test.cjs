@@ -46,6 +46,7 @@ function harness({ video = false } = {}) {
   };
   const ctx = {
     CT: C,
+    CTVirtual: require("../assets/virtual.js"),
     crypto: globalThis.crypto,
     document,
     matchMedia: () => ({ matches: true, addEventListener() {} }),
@@ -103,7 +104,7 @@ function harness({ video = false } = {}) {
     /\binit\(\);\s*\}\)\(\);\s*$/,
     `render=()=>{};persist=()=>{onSaved();};takeScramble=()=>{currentScramble='F2';};toast=()=>{};openCategory=()=>{};
     state={categories:[{id:'test',name:'Test',solves:[]}],revision:0};pref.active='test';view='timer';
-    globalThis.hooks={beginHold,releaseHold,finishSolve,cancelTimer,bindTimerSurface,inspectionTick,timer,pref,solves,ensureCameraReady,videoCapture,setPending(v){scramblePending=v;},currentAlg(){return currentScramble;}};
+    globalThis.hooks={context(nextView,type){view=nextView;state.categories[0].type=type;},stubTraining(){finishTrainingAttempt=()=>{globalThis.hooks._trainingStopped=true;};},trainingStopped(){return Boolean(globalThis.hooks._trainingStopped);},beginHold,releaseHold,finishSolve,cancelTimer,bindTimerSurface,inspectionTick,timer,pref,solves,ensureCameraReady,videoCapture,setPending(v){scramblePending=v;},currentAlg(){return currentScramble;}};
   })();`,
   );
   ctx.onSaved = () => saved++;
@@ -118,6 +119,12 @@ function harness({ video = false } = {}) {
   };
   return { ...ctx.hooks, advance, events, node, saved: () => saved, recordingStarts };
 }
+test("Trainer completion is independent of virtual category selection, while physical recording rejects it", () => {
+  const training = harness(); training.context("training", "virtual"); training.stubTraining(); training.timer.phase = "running"; training.finishSolve();
+  assert.equal(training.trainingStopped(), true); assert.equal(training.saved(), 0);
+  const physical = harness(); physical.context("timer", "virtual"); physical.timer.phase = "running"; physical.finishSolve();
+  assert.equal(physical.saved(), 0); assert.equal(physical.solves().length, 0);
+});
 test("hold-to-start rejects a short hold and records exactly once with the original scramble", () => {
   const h = harness(),
     alg = h.currentAlg();

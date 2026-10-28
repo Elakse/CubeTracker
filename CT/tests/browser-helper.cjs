@@ -8,6 +8,11 @@ const root = path.resolve(__dirname, '..');
 const WIN_PLAYWRIGHT = 'C:/Users/alejo/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright';
 const WIN_CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
+// The playground tests were written against the original defaults (I/K = R/R', slow squares, animations off).
+// The app now ships Alejo's own defaults, so those tests seed the original settings explicitly.
+const LEGACY_PLAY = { separation: 65, pitch: -25, yaw: 0, radius: 4, outlineThickness: 2.5, perspective: 80, animations: false,
+  bindings: { KeyI:'R', KeyK:"R'", KeyJ:'U', KeyF:"U'", KeyH:'F', KeyG:"F'", KeyD:'L', KeyE:"L'", KeyS:'D', KeyL:"D'", KeyW:'B', KeyO:"B'", KeyT:'x', KeyY:"x'", KeyA:"y'", Semicolon:'y', KeyQ:"z'", KeyP:'z', KeyU:'Rw', KeyM:"Rw'", KeyV:'Lw', KeyR:"Lw'", Digit5:'M', Digit6:"M'", KeyN:'E', KeyB:"E'", Comma:'Uw', Period:"Uw'" } };
+
 function loadPlaywright() {
   for (const id of [process.env.CT_PLAYWRIGHT, WIN_PLAYWRIGHT, 'playwright']) {
     if (!id) continue;
@@ -23,7 +28,7 @@ function makeSolves(count, { time = (i) => 9000 + (i % 50) * 100, everyHours = 2
     date: new Date(end - (count - i) * everyHours * 3600e3).toISOString(), note: note(i),
   }));
 }
-async function open({ categories, width = 1440, height = 900, theme = 'dark', hash = 'timer', clock = false } = {}) {
+async function open({ categories, width = 1440, height = 900, theme = 'dark', hash = 'timer', clock = false, cubePlay, prefs } = {}) {
   let library = { version: 1, revision: 0, categories: categories || [{ id: 'test', name: 'Test', solves: makeSolves(300) }] };
   const server = http.createServer(async (req, res) => {
     if (req.url === '/api/library') {
@@ -42,10 +47,10 @@ async function open({ categories, width = 1440, height = 900, theme = 'dark', ha
   const page = await browser.newPage({ viewport: { width, height } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.addInitScript((theme) => { window.Worker = undefined; if (!localStorage.getItem('cubetracker.preferences.v2')) localStorage.setItem('cubetracker.preferences.v2', JSON.stringify({ version: 2, theme, accent: 'forest' })); }, theme);
+  await page.addInitScript(({ theme, cubePlay, prefs }) => { window.Worker = undefined; if (!localStorage.getItem('cubetracker.preferences.v2')) localStorage.setItem('cubetracker.preferences.v2', JSON.stringify({ version: 2, theme, accent: 'forest', ...(prefs || {}), ...(cubePlay ? { cubePlay } : {}) })); }, { theme, cubePlay, prefs });
   await page.goto(`http://127.0.0.1:${server.address().port}/?t=${Date.now()}#${hash}`);
   await page.waitForTimeout(2500);
   if (clock) await page.clock.install();
   return { page, errors, library: () => library, close: async () => { await browser.close(); server.close(); } };
 }
-module.exports = { open, makeSolves, root };
+module.exports = { open, makeSolves, root, LEGACY_PLAY };
